@@ -164,7 +164,7 @@
     "pairing_file_exported_success": "Pairing file exported successfully!",
     "failed_export_pairing_file": "Failed to export pairing file",
     "export_not_recommended": "Export (Not Recommended)",
-    "refresh_installed_apps": "Refresh Installed Apps",
+    "refresh_installed_apps": "Rescan Installed Apps",
     "place_all": "Place In All Apps"
   },
   "settings": {
