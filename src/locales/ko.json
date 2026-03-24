@@ -78,7 +78,7 @@
     "max_certs_desc": "기존 인증서를 폐기하고 새로운 인증서를 생성합니다.",
     "hide_certificate_list": "인증서 목록 숨기기",
     "choose_what_to_revoke": "폐기할 인증서 선택",
-    "continue": "계속"
+    "continue": "계속".
     "no_keyring_available": "이기기에 인증서를 저장할 수 없습니다."
   },
   "device": {
@@ -164,7 +164,7 @@
     "pairing_file_exported_success": "페어링 파일 내보내기 성공!",
     "failed_export_pairing_file": "페어링 파일 내보내기 실패",
     "export_not_recommended": "내보내기(권장되지 않음)",
-    "refresh_installed_apps": "설치된 앱 새로고침"
+    "refresh_installed_apps": "설치된 앱 새로고침",
     "place_all": "모든 앱에 배치"
   },
   "settings": {
