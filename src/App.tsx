@@ -26,19 +26,9 @@ import { checkForUpdates } from "./update";
 import logo from "./iloader.svg";
 import { GlassCard } from "./components/GlassCard";
 import { useTranslation } from "react-i18next";
-import {
-  DEFAULT_APP_NAME,
-  shouldDoSuperImportantLogic,
-  startSuperImportantRebranding,
-  syncAppTitle,
-} from "./superImportantUtils";
 
 function App() {
   const { t } = useTranslation();
-  const [appName, setAppName] = useState<string>(DEFAULT_APP_NAME);
-  const [rebrandCount, setRebrandCount] = useState<number>(0);
-  const [isNameGlitching, setIsNameGlitching] = useState<boolean>(false);
-  const shouldShowRebrandCounter = shouldDoSuperImportantLogic();
 
   const [operationState, setOperationState] = useState<OperationState | null>(
     null,
@@ -64,17 +54,6 @@ function App() {
 
   useEffect(() => {
     checkForUpdates();
-  }, []);
-
-  useEffect(() => {
-    syncAppTitle(appName);
-  }, [appName]);
-
-  useEffect(() => {
-    return startSuperImportantRebranding(setAppName, {
-      setRebrandCount,
-      setIsNameGlitching,
-    });
   }, []);
 
   useEffect(() => {
@@ -202,13 +181,8 @@ function App() {
           <div className="title-block">
             <img src={logo} alt={t("app.logo_alt")} className="logo" />
             <div>
-              <h1 className={`title ${isNameGlitching ? "title-glitch" : ""}`}>
-                {appName}
-              </h1>
+              <h1 className="title">iloader</h1>
               <p className="subtitle">{t("subtitle")}</p>
-              {shouldShowRebrandCounter && (
-                <p className="rebrand-counter">Rebrands today: {rebrandCount}</p>
-              )}
             </div>
           </div>
           <span className="version-pill">

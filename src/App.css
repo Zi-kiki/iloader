@@ -93,44 +93,10 @@ body {
   font-size: 1.8rem;
 }
 
-.title-glitch {
-  animation: title-glitch 120ms steps(2, end) infinite;
-  text-shadow:
-    1px 0 rgba(255, 69, 58, 0.8),
-    -1px 0 rgba(10, 132, 255, 0.8);
-}
-
 .subtitle {
   margin: 0;
   font-size: 0.95rem;
   color: var(--text-muted);
-}
-
-.rebrand-counter {
-  margin: 0.2rem 0 0;
-  font-size: 0.82rem;
-  color: rgba(247, 249, 255, 0.65);
-  letter-spacing: 0.02em;
-}
-
-@keyframes title-glitch {
-  0% {
-    transform: translateX(0);
-    opacity: 1;
-  }
-
-  30% {
-    transform: translateX(1px);
-  }
-
-  60% {
-    transform: translateX(-1px);
-  }
-
-  100% {
-    transform: translateX(0);
-    opacity: 0.95;
-  }
 }
 
 .logo {
