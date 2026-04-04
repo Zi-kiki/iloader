@@ -190,7 +190,7 @@ async fn login(
         .anisette_provider(
             RemoteV3AnisetteProvider::default()
                 .set_serial_number("0".to_string())
-                .set_storage(create_sideloading_storage(&app)?)
+                .set_storage(create_sideloading_storage(app)?)
                 .set_url(&anisette_url),
         )
         .login(password, tfa_closure)
@@ -239,7 +239,7 @@ async fn login(
 
     let sideloader = SideloaderBuilder::new(dev_session, email.to_lowercase())
         .machine_name("iloader".to_string())
-        .storage(create_sideloading_storage(&app)?)
+        .storage(create_sideloading_storage(app)?)
         .max_certs_behavior(MaxCertsBehavior::Prompt(Box::new(max_certs_callback)))
         .build();
 

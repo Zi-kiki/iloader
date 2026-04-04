@@ -265,9 +265,8 @@ fn with_pairing_storage<T>(
     f: impl FnOnce(&dyn SideloadingStorage) -> Result<T, String>,
 ) -> Result<T, String> {
     let current_keyring_enabled = keyring_available();
-    let storage = PAIRING_STORAGE.get_or_init(|| {
-        Mutex::new(build_pairing_storage_entry(app, current_keyring_enabled))
-    });
+    let storage = PAIRING_STORAGE
+        .get_or_init(|| Mutex::new(build_pairing_storage_entry(app, current_keyring_enabled)));
 
     let mut guard = storage
         .lock()
@@ -276,8 +275,7 @@ fn with_pairing_storage<T>(
     if guard.keyring_enabled != current_keyring_enabled {
         info!(
             "Pairing storage backend changed at runtime (keyring_enabled: {} -> {}), recreating storage",
-            guard.keyring_enabled,
-            current_keyring_enabled
+            guard.keyring_enabled, current_keyring_enabled
         );
         *guard = build_pairing_storage_entry(app, current_keyring_enabled);
     }
@@ -330,12 +328,14 @@ pub async fn pairing_file(
                 };
 
                 with_pairing_storage(app, |storage| {
-                    storage.store_data(&cache_key, &generated_bytes).map_err(|e| {
-                        format!(
-                            "Failed to store RPPairing for device {}: {}",
-                            device.name, e
-                        )
-                    })
+                    storage
+                        .store_data(&cache_key, &generated_bytes)
+                        .map_err(|e| {
+                            format!(
+                                "Failed to store RPPairing for device {}: {}",
+                                device.name, e
+                            )
+                        })
                 })?;
 
                 generated_plist
@@ -354,12 +354,14 @@ pub async fn pairing_file(
         };
 
         with_pairing_storage(app, |storage| {
-            storage.store_data(&cache_key, &generated_bytes).map_err(|e| {
-                format!(
-                    "Failed to store RPPairing for device {}: {}",
-                    device.name, e
-                )
-            })
+            storage
+                .store_data(&cache_key, &generated_bytes)
+                .map_err(|e| {
+                    format!(
+                        "Failed to store RPPairing for device {}: {}",
+                        device.name, e
+                    )
+                })
         })?;
 
         generated_plist
