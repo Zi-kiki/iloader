@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 use tokio_util::sync::CancellationToken;
 
-use crate::pairing::pairing_file;
+use crate::{error::AppError, pairing::pairing_file};
 
 #[derive(Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -32,62 +32,71 @@ pub type DeviceInfoMutex = Mutex<Option<DeviceInfoWithPairing>>;
 pub type PairingCancelToken = Mutex<Option<CancellationToken>>;
 
 #[tauri::command]
-pub async fn list_devices() -> Result<Vec<DeviceInfo>, String> {
-    let usbmuxd = UsbmuxdConnection::default().await;
-    if usbmuxd.is_err() {
-        eprintln!("Failed to connect to usbmuxd: {:?}", usbmuxd.err());
-        return Err("Failed to connect to usbmuxd".to_string());
-    }
-    let mut usbmuxd = usbmuxd.unwrap();
+pub async fn list_devices() -> Result<Vec<DeviceInfo>, AppError> {
+    let mut usbmuxd = get_usbmuxd().await?;
 
-    let devs = usbmuxd.get_devices().await.unwrap();
+    let devs = usbmuxd.get_devices().await.map_err(|e| {
+        AppError::Usbmuxd("Failed to list devices from usbmuxd".into(), e.to_string())
+    })?;
     if devs.is_empty() {
         return Ok(vec![]);
     }
 
+    let usbmuxd_addr = UsbmuxdAddr::from_env_var().map_err(|e| {
+        AppError::Usbmuxd(
+            "Invalid usbmuxd address from environment".into(),
+            e.to_string(),
+        )
+    })?;
+
     let device_info_futures: Vec<_> = devs
         .iter()
-        .map(|d| async move {
-            let provider = d.to_provider(UsbmuxdAddr::from_env_var().unwrap(), "iloader");
-            let device_uid = d.device_id;
-            let connection_type = match d.connection_type {
-                Connection::Usb => "USB",
-                Connection::Network(_) => "Network",
-                Connection::Unknown(_) => "Unknown",
-            }
-            .to_string();
-
-            let mut lockdown_client = match LockdownClient::connect(&provider).await {
-                Ok(l) => l,
-                Err(e) => {
-                    eprintln!("Unable to connect to lockdown: {e:?}");
-                    return DeviceInfo {
-                        connection_type,
-                        name: String::from("Unknown Device"),
-                        id: device_uid,
-                        udid: d.udid.clone(),
-                    };
+        .map(|d| {
+            let usbmuxd_addr = usbmuxd_addr.clone();
+            async move {
+                let provider = d.to_provider(usbmuxd_addr, "iloader");
+                let device_uid = d.device_id;
+                let connection_type = match d.connection_type {
+                    Connection::Usb => "USB",
+                    Connection::Network(_) => "Network",
+                    Connection::Unknown(_) => "Unknown",
                 }
-            };
-
-            let device_name = lockdown_client
-                .get_value(Some("DeviceName"), None)
-                .await
-                .expect("Failed to get device name")
-                .as_string()
-                .expect("Failed to convert device name to string")
                 .to_string();
 
-            DeviceInfo {
-                name: device_name,
-                id: device_uid,
-                udid: d.udid.clone(),
-                connection_type,
+                let mut lockdown_client =
+                    LockdownClient::connect(&provider).await.map_err(|e| {
+                        eprintln!("Unable to connect to lockdown for {}: {e:?}", d.udid);
+                        AppError::DeviceComs("Unable to connect to lockdown".into(), e.to_string())
+                    })?;
+
+                let device_name_value = lockdown_client
+                    .get_value(Some("DeviceName"), None)
+                    .await
+                    .map_err(|e| {
+                    eprintln!("Failed to fetch DeviceName for {}: {e:?}", d.udid);
+                    AppError::DeviceComs("Failed to fetch DeviceName".into(), e.to_string())
+                })?;
+
+                let device_name = device_name_value.as_string().ok_or_else(|| {
+                    eprintln!("DeviceName for {} was not a string", d.udid);
+                    AppError::DeviceComs(
+                        "Failed to fetch DeviceName".into(),
+                        "DeviceName was not a string".to_string(),
+                    )
+                })?;
+
+                Ok::<DeviceInfo, AppError>(DeviceInfo {
+                    name: device_name.to_string(),
+                    id: device_uid,
+                    udid: d.udid.clone(),
+                    connection_type,
+                })
             }
         })
         .collect();
 
-    Ok(futures::future::join_all(device_info_futures).await)
+    let device_infos = futures::future::try_join_all(device_info_futures).await?;
+    Ok(device_infos)
 }
 
 #[tauri::command]
@@ -96,16 +105,14 @@ pub async fn set_selected_device(
     device_state: State<'_, DeviceInfoMutex>,
     cancel_state: State<'_, PairingCancelToken>,
     device: Option<DeviceInfo>,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     if device.is_none() {
         let mut device_state = device_state.lock().unwrap();
         *device_state = None;
         return Ok(());
     }
 
-    let mut usbmuxd = UsbmuxdConnection::default()
-        .await
-        .map_err(|e| format!("Failed to connect to usbmuxd: {}", e))?;
+    let mut usbmuxd = get_usbmuxd().await?;
 
     let token = tokio_util::sync::CancellationToken::new();
     {
@@ -115,7 +122,8 @@ pub async fn set_selected_device(
         }
     }
 
-    let pairing_result = pairing_file(&app, device.as_ref().unwrap(), &mut usbmuxd, token.clone()).await;
+    let pairing_result =
+        pairing_file(&app, device.as_ref().unwrap(), &mut usbmuxd, token.clone()).await;
 
     if !token.is_cancelled() {
         let mut guard = cancel_state.lock().unwrap();
@@ -134,7 +142,7 @@ pub async fn set_selected_device(
 }
 
 #[tauri::command]
-pub async fn cancel_pairing(cancel_state: State<'_, PairingCancelToken>) -> Result<(), String> {
+pub async fn cancel_pairing(cancel_state: State<'_, PairingCancelToken>) -> Result<(), AppError> {
     let mut guard = cancel_state.lock().unwrap();
     if let Some(token) = guard.take() {
         token.cancel();
@@ -142,22 +150,24 @@ pub async fn cancel_pairing(cancel_state: State<'_, PairingCancelToken>) -> Resu
     Ok(())
 }
 
-pub async fn get_provider(device_info: &DeviceInfo) -> Result<UsbmuxdProvider, String> {
-    let mut usbmuxd = UsbmuxdConnection::default()
+pub async fn get_usbmuxd() -> Result<UsbmuxdConnection, AppError> {
+    UsbmuxdConnection::default()
         .await
-        .map_err(|e| format!("Failed to connect to usbmuxd: {}", e))?;
+        .map_err(|e| AppError::Usbmuxd("Failed to connect to usbmuxd".into(), e.to_string()))
+}
 
-    get_provider_from_connection(device_info, &mut usbmuxd).await
+pub async fn get_provider(device_info: &DeviceInfo) -> Result<UsbmuxdProvider, AppError> {
+    get_provider_from_connection(device_info, &mut (get_usbmuxd().await?)).await
 }
 
 pub async fn get_provider_from_connection(
     device_info: &DeviceInfo,
     connection: &mut UsbmuxdConnection,
-) -> Result<UsbmuxdProvider, String> {
+) -> Result<UsbmuxdProvider, AppError> {
     let device = connection
         .get_device(&device_info.udid)
         .await
-        .map_err(|e| format!("Failed to get device: {}", e))?;
+        .map_err(|e| AppError::DeviceComs("Failed to get device".into(), e.to_string()))?;
 
     let provider = device.to_provider(UsbmuxdAddr::from_env_var().unwrap(), "iloader");
     Ok(provider)

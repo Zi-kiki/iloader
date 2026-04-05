@@ -6,6 +6,8 @@ use isideload::util::{
 use tauri::{AppHandle, Manager};
 use tracing::warn;
 
+use crate::error::AppError;
+
 static FORCE_DISABLE_KEYRING: AtomicBool = AtomicBool::new(false);
 
 #[tauri::command]
@@ -35,7 +37,9 @@ fn check_keyring_available() -> bool {
     false
 }
 
-pub fn create_sideloading_storage(app: &AppHandle) -> Result<Box<dyn SideloadingStorage>, String> {
+pub fn create_sideloading_storage(
+    app: &AppHandle,
+) -> Result<Box<dyn SideloadingStorage>, AppError> {
     if keyring_available() {
         Ok(Box::new(KeyringStorage::new("iloader".to_string())))
     } else {
@@ -43,9 +47,9 @@ pub fn create_sideloading_storage(app: &AppHandle) -> Result<Box<dyn Sideloading
             "Keyring is not available, falling back to filesystem storage for sideloading data. This is insecure!"
         );
         Ok(Box::new(FsStorage::new(
-            app.path()
-                .app_data_dir()
-                .map_err(|e| format!("Failed to get app data directory: {:?}", e))?,
+            app.path().app_data_dir().map_err(|e| {
+                AppError::Misc(format!("Failed to get app data directory: {:?}", e))
+            })?,
         )))
     }
 }

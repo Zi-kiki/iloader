@@ -17,6 +17,7 @@ use tauri_plugin_store::StoreExt;
 use tracing::debug;
 
 use crate::{
+    error::AppError,
     secure_storage::create_sideloading_storage,
     sideload::{SideloaderGuard, SideloaderMutex},
 };
@@ -30,20 +31,24 @@ pub async fn login_new(
     password: String,
     anisette_server: String,
     save_credentials: bool,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let account = login(&handle, &window, &email, &password, anisette_server).await?;
     let mut sideloader_guard = sideloader_state.lock().unwrap();
     *sideloader_guard = Some(account);
 
     if save_credentials {
-        let pass_entry = Entry::new("iloader", &email)
-            .map_err(|e| format!("Failed to create keyring entry for credentials: {:?}.", e))?;
+        let pass_entry = Entry::new("iloader", &email).map_err(|e| {
+            AppError::Keyring(
+                "Failed to create entry for credentials".into(),
+                e.to_string(),
+            )
+        })?;
         pass_entry
             .set_password(&password)
-            .map_err(|e| format!("Failed to save credentials to keyring: {:?}", e))?;
+            .map_err(|e| AppError::Keyring("Failed to save credentials".into(), e.to_string()))?;
         let store = handle
             .store("data.json")
-            .map_err(|e| format!("Failed to get store: {:?}", e))?;
+            .map_err(|e| AppError::Misc(format!("Failed to get store: {:?}", e)))?;
         let mut existing_ids = store
             .get("ids")
             .unwrap_or_else(|| Value::Array(vec![]))
@@ -66,12 +71,16 @@ pub async fn login_stored(
     email: String,
     anisette_server: String,
     sideloader_state: State<'_, SideloaderMutex>,
-) -> Result<(), String> {
-    let pass_entry = Entry::new("iloader", &email)
-        .map_err(|e| format!("Failed to create keyring entry for credentials: {:?}.", e))?;
+) -> Result<(), AppError> {
+    let pass_entry = Entry::new("iloader", &email).map_err(|e| {
+        AppError::Keyring(
+            "Failed to create keyring entry for credentials".to_string(),
+            e.to_string(),
+        )
+    })?;
     let password = pass_entry
         .get_password()
-        .map_err(|e| format!("Failed to get credentials: {:?}", e))?;
+        .map_err(|e| AppError::Keyring("Failed to get credentials".to_string(), e.to_string()))?;
     let account = login(&handle, &window, &email, &password, anisette_server).await?;
     let mut sideloader_guard = sideloader_state.lock().unwrap();
     *sideloader_guard = Some(account);
@@ -80,40 +89,28 @@ pub async fn login_stored(
 }
 
 #[tauri::command]
-pub fn delete_account(handle: AppHandle, email: String) -> Result<(), String> {
-    let mut errors: Vec<String> = Vec::new();
-
-    match Entry::new("iloader", &email) {
-        Ok(pass_entry) => {
-            if let Err(e) = pass_entry.delete_credential() {
-                errors.push(format!("Failed to delete credentials: {:?}.", e));
-            }
-        }
-        Err(e) => errors.push(format!(
-            "Failed to create keyring entry for credentials: {:?}.",
-            e
-        )),
-    }
-
-    match handle.store("data.json") {
-        Ok(store) => {
-            let mut existing_ids = store
-                .get("ids")
-                .unwrap_or_else(|| Value::Array(vec![]))
-                .as_array()
-                .cloned()
-                .unwrap_or_else(std::vec::Vec::new);
-            existing_ids.retain(|v| v.as_str().is_none_or(|s| s != email));
-            store.set("ids", Value::Array(existing_ids));
-        }
-        Err(e) => errors.push(format!("Failed to get store: {:?}.", e)),
-    }
-
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors.join("\n"))
-    }
+pub fn delete_account(handle: AppHandle, email: String) -> Result<(), AppError> {
+    let store = handle
+        .store("data.json")
+        .map_err(|e| AppError::Misc(format!("Failed to get store: {:?}", e)))?;
+    let mut existing_ids = store
+        .get("ids")
+        .unwrap_or_else(|| Value::Array(vec![]))
+        .as_array()
+        .cloned()
+        .unwrap_or_else(std::vec::Vec::new);
+    existing_ids.retain(|v| v.as_str().is_none_or(|s| s != email));
+    store.set("ids", Value::Array(existing_ids));
+    let pass_entry = Entry::new("iloader", &email).map_err(|e| {
+        AppError::Keyring(
+            "Failed to create keyring entry for credentials".into(),
+            e.to_string(),
+        )
+    })?;
+    pass_entry
+        .delete_credential()
+        .map_err(|e| AppError::Keyring("Failed to delete credentials".into(), e.to_string()))?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -132,9 +129,13 @@ pub fn invalidate_account(sideloader_state: State<'_, SideloaderMutex>) {
 }
 
 #[tauri::command]
-pub fn reset_anisette_state() -> Result<bool, String> {
-    let state_entry = Entry::new("iloader", "anisette_state")
-        .map_err(|e| format!("Failed to create keyring entry for anisette: {:?}.", e))?;
+pub fn reset_anisette_state() -> Result<bool, AppError> {
+    let state_entry = Entry::new("iloader", "anisette_state").map_err(|e| {
+        AppError::Keyring(
+            "Failed to create keyring entry for anisette".into(),
+            e.to_string(),
+        )
+    })?;
 
     match state_entry.delete_credential() {
         Ok(_) => {
@@ -145,7 +146,10 @@ pub fn reset_anisette_state() -> Result<bool, String> {
             debug!("No existing anisette state found in keyring, nothing to delete.");
             Ok(false)
         }
-        Err(e) => Err(format!("Failed to delete anisette state: {:?}", e)),
+        Err(e) => Err(AppError::Keyring(
+            "Failed to delete anisette state".into(),
+            e.to_string(),
+        )),
     }
 }
 
@@ -155,7 +159,7 @@ async fn login(
     email: &str,
     password: &str,
     anisette_server: String,
-) -> Result<Sideloader, String> {
+) -> Result<Sideloader, AppError> {
     let window_clone = window.clone();
     let tfa_closure = move || -> Option<String> {
         window_clone
@@ -194,14 +198,11 @@ async fn login(
                 .set_url(&anisette_url),
         )
         .login(password, tfa_closure)
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
 
     debug!("Logged in");
 
-    let dev_session = DeveloperSession::from_account(&mut account)
-        .await
-        .map_err(|e| e.to_string())?;
+    let dev_session = DeveloperSession::from_account(&mut account).await?;
 
     debug!("Created developer session");
 
@@ -238,7 +239,7 @@ async fn login(
     // TODO: Team Selection
 
     let sideloader = SideloaderBuilder::new(dev_session, email.to_lowercase())
-        .machine_name("iloader".to_string())
+        .machine_name("iloader".into())
         .storage(create_sideloading_storage(app)?)
         .max_certs_behavior(MaxCertsBehavior::Prompt(Box::new(max_certs_callback)))
         .build();
@@ -261,20 +262,13 @@ pub struct CertificateInfo {
 #[tauri::command]
 pub async fn get_certificates(
     sideloader_state: State<'_, SideloaderMutex>,
-) -> Result<Vec<CertificateInfo>, String> {
+) -> Result<Vec<CertificateInfo>, AppError> {
     let mut sideloader = SideloaderGuard::take(&sideloader_state)?;
 
-    let team = sideloader
-        .get_mut()
-        .get_team()
-        .await
-        .map_err(|e| e.to_string())?;
+    let team = sideloader.get_mut().get_team().await?;
     let dev_session = sideloader.get_mut().get_dev_session();
 
-    let certificates = dev_session
-        .list_all_development_certs(&team, None)
-        .await
-        .map_err(|e| format!("Failed to get development certificates: {:?}.", e))?;
+    let certificates = dev_session.list_all_development_certs(&team, None).await?;
 
     Ok(certificates
         .into_iter()
@@ -292,20 +286,15 @@ pub async fn get_certificates(
 pub async fn revoke_certificate(
     serial_number: String,
     sideloader_state: State<'_, SideloaderMutex>,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let mut sideloader = SideloaderGuard::take(&sideloader_state)?;
 
-    let team = sideloader
-        .get_mut()
-        .get_team()
-        .await
-        .map_err(|e| e.to_string())?;
+    let team = sideloader.get_mut().get_team().await?;
     let dev_session = sideloader.get_mut().get_dev_session();
 
     dev_session
         .revoke_development_cert(&team, &serial_number, None)
-        .await
-        .map_err(|e| format!("Failed to revoke development certificates: {:?}.", e))?;
+        .await?;
 
     Ok(())
 }
@@ -313,20 +302,13 @@ pub async fn revoke_certificate(
 #[tauri::command]
 pub async fn list_app_ids(
     sideloader_state: State<'_, SideloaderMutex>,
-) -> Result<ListAppIdsResponse, String> {
+) -> Result<ListAppIdsResponse, AppError> {
     let mut sideloader = SideloaderGuard::take(&sideloader_state)?;
 
-    let team = sideloader
-        .get_mut()
-        .get_team()
-        .await
-        .map_err(|e| e.to_string())?;
+    let team = sideloader.get_mut().get_team().await?;
     let dev_session = sideloader.get_mut().get_dev_session();
 
-    let response = dev_session
-        .list_app_ids(&team, None)
-        .await
-        .map_err(|e| e.to_string())?;
+    let response = dev_session.list_app_ids(&team, None).await?;
 
     Ok(response.clone())
 }
@@ -335,20 +317,13 @@ pub async fn list_app_ids(
 pub async fn delete_app_id(
     app_id_id: String,
     sideloader_state: State<'_, SideloaderMutex>,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let mut sideloader = SideloaderGuard::take(&sideloader_state)?;
 
-    let team = sideloader
-        .get_mut()
-        .get_team()
-        .await
-        .map_err(|e| e.to_string())?;
+    let team = sideloader.get_mut().get_team().await?;
     let dev_session = sideloader.get_mut().get_dev_session();
 
-    dev_session
-        .delete_app_id(&team, &app_id_id, None)
-        .await
-        .map_err(|e| format!("Failed to delete App ID: {:?}.", e))?;
+    dev_session.delete_app_id(&team, &app_id_id, None).await?;
 
     Ok(())
 }

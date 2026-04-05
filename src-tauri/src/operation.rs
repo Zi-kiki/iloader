@@ -1,6 +1,8 @@
 use serde::Serialize;
 use tauri::{Emitter, Window};
 
+use crate::error::AppError;
+
 pub struct Operation<'a> {
     id: String,
     window: &'a Window,
@@ -11,7 +13,7 @@ pub struct Operation<'a> {
 struct OperationUpdate<'a> {
     update_type: &'a str,
     step_id: &'a str,
-    extra_details: Option<String>,
+    extra_details: Option<AppError>,
 }
 
 impl<'a> Operation<'a> {
@@ -19,12 +21,12 @@ impl<'a> Operation<'a> {
         Operation { id, window }
     }
 
-    pub fn move_on(&self, old_id: &str, new_id: &str) -> Result<(), String> {
+    pub fn move_on(&self, old_id: &str, new_id: &str) -> Result<(), AppError> {
         self.complete(old_id)?;
         self.start(new_id)
     }
 
-    pub fn start(&self, id: &str) -> Result<(), String> {
+    pub fn start(&self, id: &str) -> Result<(), AppError> {
         self.window
             .emit(
                 &format!("operation_{}", self.id),
@@ -34,10 +36,10 @@ impl<'a> Operation<'a> {
                     extra_details: None,
                 },
             )
-            .map_err(|_| "Failed to emit status to frontend".to_string())
+            .map_err(|e| AppError::OperationUpdate(e.to_string()))
     }
 
-    pub fn complete(&self, id: &str) -> Result<(), String> {
+    pub fn complete(&self, id: &str) -> Result<(), AppError> {
         self.window
             .emit(
                 &format!("operation_{}", self.id),
@@ -47,10 +49,10 @@ impl<'a> Operation<'a> {
                     extra_details: None,
                 },
             )
-            .map_err(|_| "Failed to emit status to frontend".to_string())
+            .map_err(|e| AppError::OperationUpdate(e.to_string()))
     }
 
-    pub fn fail<T>(&self, id: &str, error: String) -> Result<T, String> {
+    pub fn fail<T>(&self, id: &str, error: AppError) -> Result<T, AppError> {
         self.window
             .emit(
                 &format!("operation_{}", self.id),
@@ -60,11 +62,11 @@ impl<'a> Operation<'a> {
                     extra_details: Some(error.clone()),
                 },
             )
-            .map_err(|_| "Failed to emit status to frontend".to_string())?;
+            .map_err(|e| AppError::OperationUpdate(e.to_string()))?;
         Err(error)
     }
 
-    pub fn fail_if_err<T>(&self, id: &str, res: Result<T, String>) -> Result<T, String> {
+    pub fn fail_if_err<T>(&self, id: &str, res: Result<T, AppError>) -> Result<T, AppError> {
         match res {
             Ok(t) => Ok(t),
             Err(e) => self.fail::<T>(id, e),

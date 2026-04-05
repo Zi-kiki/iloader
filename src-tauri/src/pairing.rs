@@ -25,6 +25,7 @@ use tracing::{error, info, warn};
 
 use crate::{
     device::{DeviceInfo, DeviceInfoMutex, get_provider, get_provider_from_connection},
+    error::AppError,
     secure_storage::{create_sideloading_storage, keyring_available},
 };
 
@@ -64,7 +65,7 @@ async fn generate_lockdown_plist(
     device: &DeviceInfo,
     provider: &dyn IdeviceProvider,
     usbmuxd: &mut UsbmuxdConnection,
-) -> Result<plist::Value, String> {
+) -> Result<plist::Value, AppError> {
     let mut pairing_file = usbmuxd.get_pair_record(&device.udid).await.map_err(|e| {
         format!(
             "Failed to get pairing record for device {}: {}",
@@ -151,7 +152,7 @@ pub async fn place_file(
     provider: &dyn IdeviceProvider,
     bundle_id: String,
     path: String,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let house_arrest_client = HouseArrestClient::connect(provider)
         .await
         .map_err(|e| format!("Failed to connect to house arrest: {}", e))?;
@@ -192,12 +193,12 @@ pub async fn place_pairing_cmd(
     device_state: State<'_, DeviceInfoMutex>,
     bundle_id: String,
     path: String,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let device = {
         let device_guard = device_state.lock().unwrap();
         match &*device_guard {
             Some(d) => d.clone(),
-            None => return Err("No device selected".to_string()),
+            None => return Err(AppError::NoDeviceSelected),
         }
     };
 
@@ -215,12 +216,12 @@ pub async fn place_pairing_cmd(
 pub async fn export_pairing_cmd(
     device_state: State<'_, DeviceInfoMutex>,
     app: AppHandle,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let device = {
         let device_guard = device_state.lock().unwrap();
         match &*device_guard {
             Some(d) => d.clone(),
-            None => return Err("No device selected".to_string()),
+            None => return Err(AppError::NoDeviceSelected),
         }
     };
 
@@ -262,8 +263,8 @@ fn build_pairing_storage_entry(app: &AppHandle, keyring_enabled: bool) -> Pairin
 
 fn with_pairing_storage<T>(
     app: &AppHandle,
-    f: impl FnOnce(&dyn SideloadingStorage) -> Result<T, String>,
-) -> Result<T, String> {
+    f: impl FnOnce(&dyn SideloadingStorage) -> Result<T, AppError>,
+) -> Result<T, AppError> {
     let current_keyring_enabled = keyring_available();
     let storage = PAIRING_STORAGE
         .get_or_init(|| Mutex::new(build_pairing_storage_entry(app, current_keyring_enabled)));
@@ -288,7 +289,7 @@ pub async fn pairing_file(
     device: &DeviceInfo,
     usbmuxd: &mut UsbmuxdConnection,
     cancel: CancellationToken,
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, AppError> {
     let provider = get_provider(device).await?;
 
     let lockdown_plist = tokio::select! {
@@ -383,12 +384,12 @@ pub async fn pairing_file(
 pub async fn delete_stored_rppairing(
     device_state: State<'_, DeviceInfoMutex>,
     app: AppHandle,
-) -> Result<bool, String> {
+) -> Result<bool, AppError> {
     let device = {
         let device_guard = device_state.lock().unwrap();
         match &*device_guard {
             Some(d) => d.clone(),
-            None => return Err("No device selected".to_string()),
+            None => return Err(AppError::NoDeviceSelected),
         }
     };
 
@@ -421,12 +422,12 @@ pub async fn delete_stored_rppairing(
 #[tauri::command]
 pub async fn installed_pairing_apps(
     device_state: State<'_, DeviceInfoMutex>,
-) -> Result<Vec<PairingAppInfo>, String> {
+) -> Result<Vec<PairingAppInfo>, AppError> {
     let device = {
         let device_guard = device_state.lock().unwrap();
         match &*device_guard {
             Some(d) => d.clone(),
-            None => return Err("No device selected".to_string()),
+            None => return Err(AppError::NoDeviceSelected),
         }
     };
     let provider = get_provider(&device.info).await?;
@@ -471,7 +472,7 @@ pub async fn installed_pairing_apps(
 pub async fn get_sidestore_info(
     device: &DeviceInfo,
     live_container: bool,
-) -> Result<Option<PairingAppInfo>, String> {
+) -> Result<Option<PairingAppInfo>, AppError> {
     let provider = get_provider(device).await?;
     let mut installation_proxy = InstallationProxyClient::connect(&provider)
         .await

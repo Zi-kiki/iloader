@@ -8,6 +8,7 @@ mod sideload;
 mod pairing;
 #[macro_use]
 mod secure_storage;
+mod error;
 mod logging;
 mod operation;
 
