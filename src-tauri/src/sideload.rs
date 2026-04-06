@@ -6,7 +6,6 @@ use crate::{
     operation::Operation,
     pairing::{get_sidestore_info, place_file},
 };
-use idevice::usbmuxd::UsbmuxdConnection;
 use isideload::sideload::{application::SpecialApp, sideloader::Sideloader};
 use tauri::{AppHandle, Manager, State, Window};
 
@@ -58,11 +57,12 @@ pub async fn sideload(
 
     let mut sideloader = SideloaderGuard::take(&sideloader_state)?;
 
-    sideloader
+    let special = sideloader
         .get_mut()
         .install_app(&provider, app_path.into(), false)
-        .await
-        .map_err(|e| e.to_string())
+        .await?;
+
+    Ok(special)
 }
 
 #[tauri::command]
@@ -121,7 +121,7 @@ pub async fn install_sidestore_operation(
     let dest = handle
         .path()
         .temp_dir()
-        .map_err(|e| format!("Failed to get temp dir: {:?}", e))?
+        .map_err(|e| AppError::Filesystem("Failed to get temp dir".into(), e.to_string()))?
         .join(filename);
     op.fail_if_err("download", download(url, &dest).await)?;
     op.move_on("download", "install")?;
@@ -161,7 +161,10 @@ pub async fn install_sidestore_operation(
     } else {
         return op.fail(
             "pairing",
-            "Could not find SideStore's bundle ID".to_string(),
+            AppError::HouseArrest(
+                "SideStore's not found".into(),
+                "The device did not report SideStore's bundle ID as installed".into(),
+            ),
         );
     }
 
@@ -172,18 +175,21 @@ pub async fn install_sidestore_operation(
 pub async fn download(url: impl AsRef<str>, dest: &PathBuf) -> Result<(), AppError> {
     let response = reqwest::get(url.as_ref())
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| AppError::Download(e.to_string()))?;
     if !response.status().is_success() {
-        return Err(format!(
+        return Err(AppError::Download(format!(
             "Failed to download file: HTTP {}",
             response.status()
-        ));
+        )));
     }
 
-    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
-    tokio::fs::write(dest, &bytes)
+    let bytes = response
+        .bytes()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| AppError::Download(e.to_string()))?;
+    tokio::fs::write(dest, &bytes).await.map_err(|e| {
+        AppError::Filesystem("Failed to write downloaded file".into(), e.to_string())
+    })?;
 
     Ok(())
 }

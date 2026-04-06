@@ -310,10 +310,7 @@ pub async fn pairing_file(
 
     let cached_rppairing = with_pairing_storage(app, |storage| {
         storage.retrieve_data(&cache_key).map_err(|e| {
-            format!(
-                "Failed to get RPPairing from storage for device {}: {}",
-                device.name, e
-            )
+            AppError::Storage("Failed to get RPPairing from storage".into(), e.to_string())
         })
     })?;
 
@@ -331,7 +328,7 @@ pub async fn pairing_file(
                         return Err(AppError::Canceled("Pairing".into()));
                     }
                     res = generate_rppairing_plist(&provider) => {
-                        res.map_err(|e| format!("Failed to generate RPPairing: {}", e))?
+                        res.map_err(|e| AppError::RemotePairing(e.to_string()))?
                     }
                 };
 
@@ -339,10 +336,7 @@ pub async fn pairing_file(
                     storage
                         .store_data(&cache_key, &generated_bytes)
                         .map_err(|e| {
-                            format!(
-                                "Failed to store RPPairing for device {}: {}",
-                                device.name, e
-                            )
+                            AppError::Storage("Failed to store RPPairing".into(), e.to_string())
                         })
                 })?;
 
@@ -354,22 +348,17 @@ pub async fn pairing_file(
 
         let (generated_plist, generated_bytes) = tokio::select! {
             _ = cancel.cancelled() => {
-                Err(AppError::Canceled("Pairing".into()));
+                return Err(AppError::Canceled("Pairing".into()));
             }
             res = generate_rppairing_plist(&provider) => {
-                res.map_err(|e| format!("Failed to generate RPPairing: {}", e))?
+                res.map_err(|e| AppError::RemotePairing(e.to_string()))?
             }
         };
 
         with_pairing_storage(app, |storage| {
             storage
                 .store_data(&cache_key, &generated_bytes)
-                .map_err(|e| {
-                    format!(
-                        "Failed to store RPPairing for device {}: {}",
-                        device.name, e
-                    )
-                })
+                .map_err(|e| AppError::Storage("Failed to store RPPairing".into(), e.to_string()))
         })?;
 
         generated_plist
@@ -391,7 +380,7 @@ pub async fn pairing_file(
 pub async fn delete_stored_rppairing(
     device_state: State<'_, DeviceInfoMutex>,
     app: AppHandle,
-) -> Result<bool, AppError> {
+) -> Result<(), AppError> {
     let device = {
         let device_guard = device_state.lock().unwrap();
         match &*device_guard {
@@ -402,28 +391,13 @@ pub async fn delete_stored_rppairing(
 
     let cache_key = format!("rppairing_file_{}", device.info.udid);
 
-    let had_pairing = with_pairing_storage(&app, |storage| {
-        storage
-            .retrieve_data(&cache_key)
-            .map_err(|e| {
-                format!(
-                    "Failed to check stored RPPairing for device {}: {}",
-                    device.info.name, e
-                )
-            })
-            .map(|data| data.is_some_and(|bytes| !bytes.is_empty()))
-    })?;
-
     with_pairing_storage(&app, |storage| {
         storage.delete(&cache_key).map_err(|e| {
-            format!(
-                "Failed to delete stored RPPairing for device {}: {}",
-                device.info.name, e
-            )
+            AppError::Storage("Failed to delete stored RPPairing".into(), e.to_string())
         })
     })?;
 
-    Ok(had_pairing)
+    Ok(())
 }
 
 #[tauri::command]
@@ -438,21 +412,27 @@ pub async fn installed_pairing_apps(
         }
     };
     let provider = get_provider(&device.info).await?;
-    let mut installation_proxy = InstallationProxyClient::connect(&provider)
-        .await
-        .map_err(|e| format!("Failed to connect to installation proxy: {}", e))?;
+    let mut installation_proxy =
+        InstallationProxyClient::connect(&provider)
+            .await
+            .map_err(|e| {
+                AppError::DeviceComs(
+                    "Failed to connect to installation proxy".into(),
+                    e.to_string(),
+                )
+            })?;
 
     let installed_apps = installation_proxy
         .get_apps(Some("User"), None)
         .await
-        .map_err(|e| format!("Failed to get installed apps: {}", e))?;
+        .map_err(|e| AppError::DeviceComs("Failed to get installed apps".into(), e.to_string()))?;
 
     let mut installed = HashMap::new();
     for (bundle_id, app) in installed_apps {
         let n = app
             .as_dictionary()
             .and_then(|x| x.get("CFBundleDisplayName").and_then(|x| x.as_string()))
-            .ok_or("Failed to parse installed apps".to_string())?;
+            .ok_or(AppError::Misc("Failed to parse installed apps".to_string()))?;
 
         if PAIRING_APPS.iter().any(|(name, _)| name == &n) {
             if bundle_id.contains("com.stik.stikdebug") {
@@ -481,20 +461,26 @@ pub async fn get_sidestore_info(
     live_container: bool,
 ) -> Result<Option<PairingAppInfo>, AppError> {
     let provider = get_provider(device).await?;
-    let mut installation_proxy = InstallationProxyClient::connect(&provider)
-        .await
-        .map_err(|e| format!("Failed to connect to installation proxy: {}", e))?;
+    let mut installation_proxy =
+        InstallationProxyClient::connect(&provider)
+            .await
+            .map_err(|e| {
+                AppError::DeviceComs(
+                    "Failed to connect to installation proxy".into(),
+                    e.to_string(),
+                )
+            })?;
 
     let installed_apps = installation_proxy
         .get_apps(Some("User"), None)
         .await
-        .map_err(|e| format!("Failed to get installed apps: {}", e))?;
+        .map_err(|e| AppError::DeviceComs("Failed to get installed apps".into(), e.to_string()))?;
 
     for (bundle_id, app) in installed_apps {
         let n = app
             .as_dictionary()
             .and_then(|x| x.get("CFBundleDisplayName").and_then(|x| x.as_string()))
-            .ok_or("Failed to parse installed apps".to_string())?;
+            .ok_or(AppError::Misc("Failed to parse installed apps".to_string()))?;
 
         if n == "SideStore" || (live_container && n == "LiveContainer") {
             return Ok(Some(PairingAppInfo {

@@ -1,0 +1,108 @@
+import type { TFunction } from "i18next";
+
+export const errorSuggestionKeys = {
+  underage: ["error.suggestions.underage"],
+  account_locked: ["error.suggestions.account_locked"],
+  developer: ["error.suggestions.developer"],
+  auth: ["error.suggestions.auth"],
+  download: ["error.suggestions.download"],
+  house_arrest: ["error.suggestions.house_arrest"],
+  remote_pairing: ["error.suggestions.trust", "error.suggestions.pairing"],
+  lockdown_pairing: ["error.suggestions.trust", "error.suggestions.pairing"],
+  canceled: [],
+  operation_update: [],
+  device_coms: ["error.suggestions.device_coms", "error.suggestions.trust"],
+  usbmuxd: [
+    "error.suggestions.usbmuxd",
+    "error.suggestions.device_coms",
+    "error.suggestions.trust",
+  ],
+  not_logged_in: ["error.suggestions.not_logged_in"],
+  no_device_selected: ["error.suggestions.no_device_selected"],
+  anisette: ["error.suggestions.anisette"],
+  keyring: ["error.suggestions.keyring", "error.suggestions.admin"],
+  storage: [
+    "error.suggestions.keyring",
+    "error.suggestions.admin",
+    "error.suggestions.filesystem",
+  ],
+  misc: ["error.suggestions.misc"],
+  filesystem: ["error.suggestions.filesystem", "error.suggestions.admin"],
+} as const;
+
+export type ErrorVariant = keyof typeof errorSuggestionKeys;
+
+export type AppError = {
+  type: ErrorVariant;
+  message: string;
+};
+
+export const isErrorVariant = (value: string): value is ErrorVariant => {
+  return value in errorSuggestionKeys;
+};
+
+const normalizeAnisetteServer = (anisetteServer: string) => {
+  return anisetteServer.startsWith("http://") ||
+    anisetteServer.startsWith("https://")
+    ? anisetteServer
+    : `https://${anisetteServer}`;
+};
+
+const dedupeSuggestions = (suggestions: string[]) => {
+  return [...new Set(suggestions)];
+};
+
+const getSuggestionBlock = (
+  t: TFunction,
+  key: string,
+  platform: "mac" | "windows" | "linux",
+  anisetteServer: string,
+) => {
+  const rawSuggestions = t(key, {
+    returnObjects: true,
+    defaultValue: [],
+    anisetteServerUrl: normalizeAnisetteServer(anisetteServer),
+  }) as unknown;
+
+  if (!Array.isArray(rawSuggestions)) {
+    return [];
+  }
+
+  return rawSuggestions
+    .filter((suggestion): suggestion is string => {
+      if (typeof suggestion !== "string") {
+        return false;
+      }
+      if (suggestion.startsWith("[platform::")) {
+        const platformEnd = suggestion.indexOf("]");
+        if (platformEnd !== -1) {
+          const suggestionPlatform = suggestion.substring(11, platformEnd);
+          console.log(
+            "suggestion platform:",
+            suggestionPlatform,
+            "current platform:",
+            platform,
+          );
+          if (suggestionPlatform === platform) {
+            return true;
+          }
+        }
+        return false;
+      }
+      return true;
+    })
+    .map((s) => s.replace(/^\[platform::.*?\]/, "").trim());
+};
+
+export const getErrorSuggestions = (
+  t: TFunction,
+  type: ErrorVariant,
+  platform: "mac" | "windows" | "linux",
+  anisetteServer: string,
+): string[] => {
+  return dedupeSuggestions(
+    errorSuggestionKeys[type].flatMap((key) =>
+      getSuggestionBlock(t, key, platform, anisetteServer),
+    ),
+  );
+};

@@ -87,7 +87,7 @@
     "no_devices_found": "No devices found",
     "found_device": "Found device",
     "found_devices": "Found devices",
-    "unable_load_devices_prefix": "Unable to load devices: ",
+    "unable_load_devices_prefix": "Unable to load devices",
     "no_devices_found_period": "No devices found.",
     "selected": "Selected",
     "pairing_in_progress_header": "Pairing with {{device}}...",
@@ -205,6 +205,65 @@
   "error": {
     "title": "An Error Occured: {{msg}}",
     "unknown": "Unknown",
+    "suggestions_heading": "Suggestions",
+    "suggestions": {
+      "underage": [
+        "Your Apple ID may be below the required age to use developer services."
+      ],
+      "account_locked": [
+        "Don't panic! This usually occurs after multiple failed login attempts, but it is completely harmless.",
+        "Visit ((link:https://iforgot.apple.com/)) to unlock your account."
+      ],
+      "developer": [],
+      "auth": [
+        "Try signing in again.",
+        "Make sure your credentials are correct.",
+        "If the issue persists, try using another Apple ID."
+      ],
+      "download": [
+        "Download SideStore manually from ((link:https://github.com/SideStore/SideStore/releases)) and use the \"Import IPA\" button to install it."
+      ],
+      "house_arrest": [
+        "Make sure the device is unlocked and trusted on this computer.",
+        "Try reconnecting the device and running the action again."
+      ],
+      "pairing": [
+        "Try reconnecting the device and running the action again.",
+        "Ensure your device has a passcode set.",
+        "Ensure your device is connected via USB, not wirelessly."
+      ],
+      "canceled": [],
+      "operation_update": [],
+      "usbmuxd": [
+        "[platform::windows]Ensure you have iTunes installed and check that it can detect your device.",
+        "[platform::windows]Uninstall iTunes and Apple Mobile Device Support, then install \"Apple Devices\" from the Microsoft Store.",
+        "[platform::linux]Make sure usbmuxd is installed and running."
+      ],
+      "trust": [
+        "Unlock your device, go to the home screen, and accept any trust prompts that appear."
+      ],
+      "device_coms": [
+        "Ensure your device is properly connected to your computer.",
+        "Unplug and reconnect the device. If the issue persists, try a different USB port and cable."
+      ],
+      "not_logged_in": ["Sign in to your Apple ID first."],
+      "no_device_selected": ["Select a device before continuing."],
+      "anisette": [
+        "Ensure your computer is connected to the internet.",
+        "Change your anisette server. Try several different servers.",
+        "Make sure you can access ((link:{{anisetteServerUrl}})) in a browser."
+      ],
+      "keyring": [
+        "Try enabling \"Don't use keyring\" in settings to bypass this issue. Note that this is less secure."
+      ],
+      "misc": ["Try restarting the app and/or your computer."],
+      "admin": [
+        "Try running the app with elevated permissions (as administrator/root)."
+      ],
+      "filesystem": [
+        "Make sure iloader has permission to read and write files on your system."
+      ]
+    },
     "support_message": "If the issue persists, press \"Copy to clipboard\" and send the copied error to the <discord>Discord</discord> or a <github>GitHub issue</github> for support."
   },
   "update": {

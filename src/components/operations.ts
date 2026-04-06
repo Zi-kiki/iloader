@@ -1,3 +1,5 @@
+import { AppError } from "../errors";
+
 export type Operation = {
   id: string;
   titleKey: string;
@@ -17,7 +19,7 @@ export type OperationState = {
   started: string[];
   failed: {
     stepId: string;
-    extraDetails: string;
+    extraDetails: AppError;
   }[];
 };
 
@@ -29,7 +31,7 @@ type OperationInfoUpdate = {
 type OperationFailedUpdate = {
   updateType: "failed";
   stepId: string;
-  extraDetails: string;
+  extraDetails: AppError;
 };
 
 export type OperationUpdate = OperationInfoUpdate | OperationFailedUpdate;

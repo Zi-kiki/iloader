@@ -202,10 +202,10 @@ export const AppleID = ({
                   toast.warning(t("apple_id.enter_email_password"));
                   return;
                 }
-                if (!emailInput.includes("@")) {
-                  toast.warning(t("apple_id.valid_email"));
-                  return;
-                }
+                // if (!emailInput.includes("@")) {
+                //   toast.warning(t("apple_id.valid_email"));
+                //   return;
+                // }
                 let promise = async () => {
                   await invoke("login_new", {
                     email: emailInput,
@@ -223,7 +223,7 @@ export const AppleID = ({
               }}
             >
               <input
-                type="email"
+                type="text"
                 placeholder={t("apple_id.email_placeholder")}
                 value={emailInput}
                 onChange={(e) => setEmailInput(e.target.value)}

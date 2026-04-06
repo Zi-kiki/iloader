@@ -129,3 +129,12 @@
   padding-top: 0.25rem;
   text-decoration: underline;
 }
+
+.operation-suggestions {
+  padding: 0rem 0 1rem 0;
+}
+
+.operation-suggestions ul {
+  margin: 0 0 0.5rem 0;
+  padding-left: 2rem;
+}

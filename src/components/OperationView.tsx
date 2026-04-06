@@ -6,10 +6,13 @@ import {
   FaCircleCheck,
   FaCircleMinus,
 } from "react-icons/fa6";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Trans, useTranslation } from "react-i18next";
+import { ErrorVariant, getErrorSuggestions } from "../errors";
+import { useStore } from "../StoreContext";
+import { usePlatform } from "../PlatformContext";
 
 export default ({
   operationState,
@@ -24,10 +27,39 @@ export default ({
   const done =
     (opFailed &&
       operationState.started.length ==
-      operationState.completed.length + operationState.failed.length) ||
+        operationState.completed.length + operationState.failed.length) ||
     operationState.completed.length == operation.steps.length;
 
   const [moreDetailsOpen, setMoreDetailsOpen] = useState(false);
+  const [anisetteServer] = useStore<string>(
+    "anisetteServer",
+    "ani.sidestore.io",
+  );
+  const { platform } = usePlatform();
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [underage, setUnderage] = useState<boolean>(false);
+
+  const getSuggestions = useCallback(
+    (type: ErrorVariant): string[] => {
+      return getErrorSuggestions(t, type, platform, anisetteServer);
+    },
+    [anisetteServer, t, platform],
+  );
+
+  useEffect(() => {
+    if (operationState.failed.length > 0) {
+      const suggestionSet = new Set<string>();
+      for (let f of operationState.failed) {
+        if (f.extraDetails.type === "underage") {
+          setUnderage(true);
+        }
+        for (const suggestion of getSuggestions(f.extraDetails.type)) {
+          suggestionSet.add(suggestion);
+        }
+      }
+      setSuggestions([...suggestionSet]);
+    }
+  }, [operationState, getSuggestions]);
 
   return (
     <Modal
@@ -62,7 +94,7 @@ export default ({
 
             // a little bit gross but it gets the job done.
             let lines =
-              failed?.extraDetails
+              failed?.extraDetails.message
                 ?.split("\n")
                 .filter((line) => line.includes("●")) ?? [];
             let errorShort =
@@ -91,25 +123,35 @@ export default ({
                   {failed && (
                     <>
                       <pre className="operation-extra-details">
-                        {!errorShort ? failed.extraDetails.replace(/^\n+/, "") : errorShort}
+                        {!errorShort
+                          ? failed.extraDetails.message.replace(/^\n+/, "")
+                          : errorShort}
                       </pre>
-                      {errorShort !== "" && errorShort !== null && errorShort !== undefined &&
-                        <>
-                          <p
-                            className="operation-more-details"
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => setMoreDetailsOpen(!moreDetailsOpen)}
-                          >
-                            {t("common.more_details")} {moreDetailsOpen ? "▲" : "▼"}
-                          </p>
-                          {moreDetailsOpen && (
-                            <pre className="operation-extra-details">
-                              {failed.extraDetails.replace(/^\n+/, "")}
-                            </pre>
-                          )}
-                        </>
-                      }
+                      {errorShort !== "" &&
+                        errorShort !== null &&
+                        errorShort !== undefined && (
+                          <>
+                            <p
+                              className="operation-more-details"
+                              role="button"
+                              tabIndex={0}
+                              onClick={() =>
+                                setMoreDetailsOpen(!moreDetailsOpen)
+                              }
+                            >
+                              {t("common.more_details")}{" "}
+                              {moreDetailsOpen ? "▲" : "▼"}
+                            </p>
+                            {moreDetailsOpen && (
+                              <pre className="operation-extra-details">
+                                {failed.extraDetails.message.replace(
+                                  /^\n+/,
+                                  "",
+                                )}
+                              </pre>
+                            )}
+                          </>
+                        )}
                     </>
                   )}
                 </div>
@@ -125,48 +167,79 @@ export default ({
       )}
       {done && !(!opFailed && operation.successMessageKey) && <p></p>}
       {opFailed && done && (
-        <>
-          <p style={{ margin: "1.25rem 0 0.5rem 0" }}>
-            <Trans
-              i18nKey="error.support_message"
-              components={{
-                discord: (
-                  <span
-                    onClick={() => openUrl("https://discord.gg/EA6yVgydBz")}
-                    role="link"
-                    className="error-link"
-                  />
-                ),
-                github: (
-                  <span
-                    onClick={() =>
-                      openUrl("https://github.com/nab138/iloader/issues")
-                    }
-                    role="link"
-                    className="error-link"
-                  />
-                ),
-              }}
-            />
-          </p>
+        <div className="operation-suggestions">
+          {suggestions.length > 0 && <h3>{t("error.suggestions_heading")}</h3>}
+          {suggestions.length > 0 && (
+            <ul>
+              {suggestions.map((s) => (
+                <li key={s}>
+                  {
+                    // replace ((link:URL)) with a clickable link but still keep it as li
+                    s.split(/(\(\(link:[^)]+\)\))/g).map((part, index) => {
+                      const match = part.match(/\(\(link:([^)]+)\)\)/);
+                      if (match) {
+                        const url = match[1];
+                        return (
+                          <span
+                            key={index}
+                            onClick={() => openUrl(url)}
+                            role="link"
+                            className="error-link"
+                          >
+                            {url}
+                          </span>
+                        );
+                      }
+                      return <span key={index}>{part}</span>;
+                    })
+                  }
+                </li>
+              ))}
+            </ul>
+          )}
+          {!underage && (
+            <p>
+              <Trans
+                i18nKey="error.support_message"
+                components={{
+                  discord: (
+                    <span
+                      onClick={() => openUrl("https://discord.gg/EA6yVgydBz")}
+                      role="link"
+                      className="error-link"
+                    />
+                  ),
+                  github: (
+                    <span
+                      onClick={() =>
+                        openUrl("https://github.com/nab138/iloader/issues")
+                      }
+                      role="link"
+                      className="error-link"
+                    />
+                  ),
+                }}
+              />
+            </p>
+          )}
           <button
-            style={{ marginBottom: "1.25rem", width: "100%" }}
+            style={{ width: "100%" }}
             className="action-button primary"
             onClick={() => {
               navigator.clipboard.writeText(
                 "```\n" +
-                (operationState.failed[0]?.extraDetails?.replace(
-                  /^\n+/,
-                  "",
-                ) ?? t("common.no_error")) +
-                "\n```",
+                  (operationState.failed[0]?.extraDetails?.message.replace(
+                    /^\n+/,
+                    "",
+                  ) ?? t("common.no_error")) +
+                  "\n```",
               );
               toast.success(t("common.copied_success"));
             }}
           >
             {t("operation.copy_error_clipboard")}
           </button>
-        </>
+        </div>
       )}
       {done && (
         <button style={{ width: "100%" }} onClick={closeMenu}>

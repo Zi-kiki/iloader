@@ -26,6 +26,7 @@ import { checkForUpdates } from "./update";
 import logo from "./iloader.svg";
 import { GlassCard } from "./components/GlassCard";
 import { useTranslation } from "react-i18next";
+import { usePlatform } from "./PlatformContext";
 
 function App() {
   const { t } = useTranslation();
@@ -39,17 +40,15 @@ function App() {
     null | "certificates" | "appids" | "pairing"
   >(null);
   const [version, setVersion] = useState<string>("");
-  const [platform, setPlatform] = useState<"mac" | "windows" | "linux">(
-    "windows",
-  );
+
   const refreshDevicesRef = useRef<(() => void) | null>(null);
 
   const [noKeyringAvailable, setNoKeyringAvailable] = useState<boolean>(false);
+  const { platform } = usePlatform();
 
   const checkKeyring = useCallback(async () => {
     try {
       let available = await invoke<boolean>("keyring_available");
-      console.log(available);
       setNoKeyringAvailable(!available);
     } catch (e) {
       console.error("Unable to check keyring availability:", e);
@@ -71,18 +70,6 @@ function App() {
 
   useEffect(() => {
     checkForUpdates();
-  }, []);
-
-  useEffect(() => {
-    if (typeof navigator === "undefined") return;
-    const ua = navigator.userAgent || "";
-    if (ua.includes("Mac")) {
-      setPlatform("mac");
-    } else if (ua.includes("Win")) {
-      setPlatform("windows");
-    } else if (ua.includes("Linux")) {
-      setPlatform("linux");
-    }
   }, []);
 
   const shortcutLabel = useCallback(
@@ -322,6 +309,9 @@ function App() {
                     startOperation(installSideStoreOperation, {
                       nightly: false,
                       liveContainer: false,
+                    }).catch((e) => {
+                      console.log(e.type);
+                      console.error(e.message);
                     });
                   }}
                 >
@@ -333,6 +323,9 @@ function App() {
                     startOperation(installSideStoreOperation, {
                       nightly: true,
                       liveContainer: false,
+                    }).catch((e) => {
+                      console.log(e.type);
+                      console.error(e.message);
                     });
                   }}
                 >
@@ -344,6 +337,9 @@ function App() {
                     startOperation(installLiveContainerOperation, {
                       nightly: false,
                       liveContainer: true,
+                    }).catch((e) => {
+                      console.log(e.type);
+                      console.error(e.message);
                     });
                   }}
                 >
@@ -355,6 +351,9 @@ function App() {
                     startOperation(installLiveContainerOperation, {
                       nightly: true,
                       liveContainer: true,
+                    }).catch((e) => {
+                      console.log(e.type);
+                      console.error(e.message);
                     });
                   }}
                 >
@@ -372,6 +371,9 @@ function App() {
                     if (!path) return;
                     startOperation(sideloadOperation, {
                       appPath: path as string,
+                    }).catch((e) => {
+                      console.log(e.type);
+                      console.error(e.message);
                     });
                   }}
                 >

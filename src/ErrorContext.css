@@ -32,8 +32,8 @@
 
 .error-more-details {
   cursor: pointer;
-  padding-bottom: 0.75rem;
   padding-top: 0.25rem;
+  padding-bottom: 0.5rem;
   text-decoration: underline;
 }
 
@@ -55,4 +55,13 @@
   /* color: var(--accent-primary); */
   cursor: pointer;
   text-decoration: underline;
+}
+
+.suggestions {
+  padding: 0 0 1rem 0;
+}
+
+.suggestions ul {
+  margin: 0 0 0.5rem 0;
+  padding-left: 2rem;
 }

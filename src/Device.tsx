@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { Modal } from "./components/Modal";
+import { useError } from "./ErrorContext";
 
 export type DeviceInfo = {
   name: string;
@@ -29,6 +30,8 @@ export const Device = ({
   const listingDevices = useRef<boolean>(false);
   const pairingRequestId = useRef<number>(0);
   const pairingModalTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const { err } = useError();
 
   const clearPairingModalTimer = useCallback(() => {
     if (pairingModalTimer.current) {
@@ -118,7 +121,7 @@ export const Device = ({
         }
         return count > 1 ? t("device.found_devices") : t("device.found_device");
       },
-      error: (e) => t("device.unable_load_devices_prefix") + e,
+      error: (e) => err(t("device.unable_load_devices_prefix"), e),
     });
   }, [setDevices, selectDevice, t]);
   useEffect(() => {
