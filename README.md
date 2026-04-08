@@ -37,12 +37,11 @@ Install SideStore (or other apps) and import your pairing file with ease
 
 ## Features
 
-- Install SideStore (or LiveContainer + SideStore), import certificate and place pairing file automatically
-- Install other IPAs
-- Manage pairing files in common apps like StikDebug, SideStore, Protokolle, etc
-- See and revoke development certificates
-- See App IDs
-- Save multiple apple ID credentials
+- Install SideStore (or LiveContainer + SideStore), import certificate and place rppairing+lockdown pairing files automatically
+- Import any IPA
+- Intelligent error suggestions to help resolve common issues
+- Manage pairing files in apps like StikDebug, SideStore, Protokolle, etc
+- See and revoke development certificates & app ids
 
 ## Troubleshooting
 
@@ -75,7 +74,7 @@ You can also add your name to the translators section of the README.
 
 Thank you for translating!
 
-## Building from source=
+## Building from source
 
 1. Install [bun](https://bun.sh) (or [Node.js](https://nodejs.org)) and [Rust](https://www.rust-lang.org/tools/install)
 2. Clone the repository and `cd` into it
@@ -131,10 +130,8 @@ You may retain or use branding materials in forks, tutorials, or documentation i
 
 ## Future Plans
 
-- Better error handling
-  - Checks for if device is in developer mode, has password set, etc
-  - Automatic anisette fallback
-  - Display list of solutions to common error messages
+- Checks for if device is in developer mode, has password set, etc
+- Automatic anisette fallback
 - Team selection when an account has multiple teams
 - Auto-refresh installed apps
   - Minimize to tray
