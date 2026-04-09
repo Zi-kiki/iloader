@@ -1,12 +1,23 @@
-use std::{path::PathBuf, sync::Mutex};
+use std::{collections::HashSet, path::{Path, PathBuf}, sync::Mutex};
+use tokio::time::{Duration, Instant, interval};
 
 use crate::{
-    device::{DeviceInfoMutex, get_provider, get_provider_from_connection, get_usbmuxd},
+    device::{get_provider, get_provider_from_connection, get_usbmuxd, DeviceInfoMutex},
     error::AppError,
     operation::Operation,
     pairing::{get_sidestore_info, place_file},
 };
-use isideload::sideload::{application::SpecialApp, sideloader::Sideloader};
+use idevice::{
+    IdeviceService,
+    afc::{AfcClient, opcode::AfcFopenMode},
+    installation_proxy::InstallationProxyClient,
+};
+use isideload::{
+    dev::developer_session::DevicesApi,
+    sideload::{application::SpecialApp, sideloader::Sideloader},
+    util::device::IdeviceInfo,
+};
+use plist_macro::plist;
 use tauri::{AppHandle, Manager, State, Window};
 
 pub type SideloaderMutex = Mutex<Option<Sideloader>>;
@@ -40,11 +51,192 @@ impl Drop for SideloaderGuard<'_> {
     }
 }
 
-pub async fn sideload(
+fn calculate_total_size(path: &Path) -> Result<u64, AppError> {
+    if path.is_file() {
+        return std::fs::metadata(path)
+            .map(|m| m.len())
+            .map_err(|e| AppError::Filesystem("Failed to read file metadata".into(), e.to_string()));
+    }
+
+    if path.is_dir() {
+        let mut total = 0_u64;
+        let entries = std::fs::read_dir(path)
+            .map_err(|e| AppError::Filesystem("Failed to read directory".into(), e.to_string()))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| {
+                AppError::Filesystem("Failed to read directory entry".into(), e.to_string())
+            })?;
+            total += calculate_total_size(&entry.path())?;
+        }
+        return Ok(total);
+    }
+
+    Ok(0)
+}
+
+fn collect_files(root: &Path, out: &mut Vec<PathBuf>) -> Result<(), AppError> {
+    if root.is_file() {
+        out.push(root.to_path_buf());
+        return Ok(());
+    }
+
+    if root.is_dir() {
+        let entries = std::fs::read_dir(root)
+            .map_err(|e| AppError::Filesystem("Failed to read directory".into(), e.to_string()))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| {
+                AppError::Filesystem("Failed to read directory entry".into(), e.to_string())
+            })?;
+            collect_files(&entry.path(), out)?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn ensure_remote_dirs(
+    afc_client: &mut AfcClient,
+    remote_root: &str,
+    rel_parent: &Path,
+    created_dirs: &mut HashSet<String>,
+) -> Result<(), AppError> {
+    let mut current = remote_root.to_string();
+
+    for comp in rel_parent.components() {
+        let part = comp.as_os_str().to_string_lossy().replace('\\', "/");
+        if part.is_empty() {
+            continue;
+        }
+        current = format!("{}/{}", current, part);
+        if created_dirs.insert(current.clone()) {
+            afc_client
+                .mk_dir(&current)
+                .await
+                .map_err(|e| AppError::DeviceComs(e.to_string()))?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn upload_signed_bundle(
+    provider: &impl idevice::provider::IdeviceProvider,
+    signed_app_path: &Path,
+    mut on_upload_progress: impl FnMut(u64, u64),
+) -> Result<(), AppError> {
+    let mut afc_client = AfcClient::connect(provider)
+        .await
+        .map_err(|e| AppError::DeviceComs(e.to_string()))?;
+
+    let remote_root = format!(
+        "PublicStaging/{}",
+        signed_app_path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "App.app".to_string())
+    );
+
+    afc_client
+        .mk_dir(&remote_root)
+        .await
+        .map_err(|e| AppError::DeviceComs(e.to_string()))?;
+
+    let mut files = Vec::new();
+    collect_files(signed_app_path, &mut files)?;
+
+    let total_bytes = calculate_total_size(signed_app_path)?.max(1);
+    let mut uploaded = 0_u64;
+    let mut created_dirs = HashSet::new();
+    created_dirs.insert(remote_root.clone());
+
+    for file in files {
+        let rel = file.strip_prefix(signed_app_path).map_err(|e| {
+            AppError::Filesystem(
+                "Failed to build relative upload path".into(),
+                e.to_string(),
+            )
+        })?;
+
+        let rel_parent = rel.parent().unwrap_or(Path::new(""));
+        ensure_remote_dirs(&mut afc_client, &remote_root, rel_parent, &mut created_dirs).await?;
+
+        let rel_norm = rel.to_string_lossy().replace('\\', "/");
+        let remote_file = format!("{}/{}", remote_root, rel_norm);
+
+        let mut file_handle = afc_client
+            .open(remote_file, AfcFopenMode::WrOnly)
+            .await
+            .map_err(|e| AppError::DeviceComs(e.to_string()))?;
+
+        let bytes = std::fs::read(&file)
+            .map_err(|e| AppError::Filesystem("Failed to read local file".into(), e.to_string()))?;
+
+        file_handle
+            .write_entire(&bytes)
+            .await
+            .map_err(|e| AppError::DeviceComs(e.to_string()))?;
+
+        file_handle
+            .close()
+            .await
+            .map_err(|e| AppError::DeviceComs(e.to_string()))?;
+
+        uploaded += bytes.len() as u64;
+        on_upload_progress(uploaded, total_bytes);
+    }
+
+    Ok(())
+}
+
+async fn install_signed_bundle(
+    provider: &impl idevice::provider::IdeviceProvider,
+    signed_app_path: &Path,
+    on_install_progress: impl Fn(f64),
+) -> Result<(), AppError> {
+    let mut instproxy_client = InstallationProxyClient::connect(provider)
+        .await
+        .map_err(|e| AppError::DeviceComs(e.to_string()))?;
+
+    let remote_root = format!(
+        "PublicStaging/{}",
+        signed_app_path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "App.app".to_string())
+    );
+
+    let options = plist!(dict {
+        "PackageType": "Developer"
+    });
+
+    instproxy_client
+        .install_with_callback(
+            remote_root,
+            Some(plist::Value::Dictionary(options)),
+            |(percentage, _)| {
+                on_install_progress((percentage as f64 / 100.0).clamp(0.0, 1.0));
+                async {}
+            },
+            (),
+        )
+        .await
+        .map_err(|e| AppError::DeviceComs(e.to_string()))?;
+
+    Ok(())
+}
+
+pub async fn sideload_with_progress(
+    op: &Operation<'_>,
     device_state: State<'_, DeviceInfoMutex>,
     sideloader_state: State<'_, SideloaderMutex>,
     app_path: String,
 ) -> Result<Option<SpecialApp>, AppError> {
+    op.start("prepare")?;
+    let app_path_buf: PathBuf = app_path.into();
+    let original_bytes = op.fail_if_err("prepare", calculate_total_size(&app_path_buf))?;
+    op.progress_bytes("prepare", original_bytes, original_bytes.max(1))?;
+    op.complete("prepare")?;
+
     let device = {
         let device_lock = device_state.lock().unwrap();
         match &*device_lock {
@@ -57,10 +249,101 @@ pub async fn sideload(
 
     let mut sideloader = SideloaderGuard::take(&sideloader_state)?;
 
-    let special = sideloader
-        .get_mut()
-        .install_app(&provider, app_path.into(), false)
-        .await?;
+    op.start("sign")?;
+    op.progress("sign", 0.1)?;
+
+    let device_info =
+        op.fail_if_err("sign", IdeviceInfo::from_device(&provider).await.map_err(AppError::from))?;
+
+    let team = op.fail_if_err(
+        "sign",
+        sideloader.get_mut().get_team().await.map_err(AppError::from),
+    )?;
+    op.progress("sign", 0.3)?;
+
+    op.fail_if_err(
+        "sign",
+        sideloader
+            .get_mut()
+            .get_dev_session()
+            .ensure_device_registered(&team, &device_info.name, &device_info.udid, None)
+            .await
+            .map_err(AppError::from),
+    )?;
+
+    // For large IPAs, signing can take a while. Advance progress smoothly based on size
+    // and machine capability so high-end CPUs don't look too conservative.
+    let cpu_threads = std::thread::available_parallelism()
+        .map(|n| n.get() as f64)
+        .unwrap_or(8.0);
+    let estimated_sign_throughput_mb_s = (30.0 + cpu_threads * 3.5).clamp(35.0, 180.0);
+    let estimated_sign_secs = ((original_bytes as f64
+        / (estimated_sign_throughput_mb_s * 1024.0 * 1024.0))
+        .ceil() as u64)
+        .clamp(10, 180);
+
+    let sign_start = Instant::now();
+    let mut ticker = interval(Duration::from_millis(250));
+    op.progress("sign", 0.45)?;
+
+    let mut sign_future = Box::pin(sideloader.get_mut().sign_app(app_path_buf, Some(team), false));
+
+    let (signed_app_path, special) = loop {
+        tokio::select! {
+            result = &mut sign_future => {
+                let signed = op.fail_if_err("sign", result.map_err(AppError::from))?;
+                break signed;
+            }
+            _ = ticker.tick() => {
+                let elapsed = sign_start.elapsed().as_secs_f64();
+                let linear = (elapsed / estimated_sign_secs as f64).clamp(0.0, 1.0);
+                // Slightly front-load progress for better UX while still bounded.
+                let eased = 1.0 - (1.0 - linear).powf(1.35);
+
+                // Keep headroom for final completion signal.
+                let mut visual = 0.45 + eased * 0.53;
+
+                // If signing exceeds estimate, creep forward very slowly instead of appearing frozen.
+                if elapsed > estimated_sign_secs as f64 {
+                    let overtime = (elapsed - estimated_sign_secs as f64).min(90.0);
+                    visual = visual.max(0.90 + (overtime / 90.0) * 0.08);
+                }
+
+                let _ = op.progress("sign", visual.min(0.98));
+            }
+        }
+    };
+
+    op.progress("sign", 1.0)?;
+    op.complete("sign")?;
+
+    op.start("transfer")?;
+    op.progress("transfer", 0.01)?;
+
+    op.fail_if_err(
+        "transfer",
+        upload_signed_bundle(&provider, &signed_app_path, |uploaded, total| {
+            let _ = op.progress_bytes("transfer", uploaded, total);
+        })
+        .await,
+    )?;
+
+    op.progress("transfer", 1.0)?;
+    op.complete("transfer")?;
+
+    op.start("install")?;
+    op.progress("install", 0.01)?;
+
+    op.fail_if_err(
+        "install",
+        install_signed_bundle(&provider, &signed_app_path, |ratio| {
+            let _ = op.progress("install", ratio);
+        })
+        .await,
+    )?;
+
+    op.progress("install", 1.0)?;
+    op.complete("install")?;
 
     Ok(special)
 }
@@ -73,12 +356,7 @@ pub async fn sideload_operation(
     app_path: String,
 ) -> Result<(), AppError> {
     let op = Operation::new("sideload".to_string(), &window);
-    op.start("install")?;
-    op.fail_if_err(
-        "install",
-        sideload(device_state, sideloader_state, app_path).await,
-    )?;
-    op.complete("install")?;
+    sideload_with_progress(&op, device_state, sideloader_state, app_path).await?;
     Ok(())
 }
 
@@ -134,7 +412,8 @@ pub async fn install_sidestore_operation(
     };
     op.fail_if_err(
         "install",
-        sideload(
+        sideload_with_progress(
+            &op,
             device_state,
             sideloader_state,
             dest.to_string_lossy().to_string(),

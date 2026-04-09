@@ -91,6 +91,8 @@ function App() {
         started: [],
         failed: [],
         completed: [],
+        progress: {},
+        transferBytes: {},
       });
       return new Promise<void>(async (resolve, reject) => {
         const unlistenFn = await listen<OperationUpdate>(
@@ -107,6 +109,10 @@ function App() {
                 return {
                   ...old,
                   completed: [...old.completed, event.payload.stepId],
+                  progress: {
+                    ...old.progress,
+                    [event.payload.stepId]: 1,
+                  },
                 };
               } else if (event.payload.updateType === "failed") {
                 return {
@@ -118,6 +124,28 @@ function App() {
                       extraDetails: event.payload.extraDetails,
                     },
                   ],
+                };
+              } else if (event.payload.updateType === "progress") {
+                const raw = event.payload.progress ?? 0;
+                const normalized = Math.max(0, Math.min(1, raw));
+                const nextTransferBytes =
+                  event.payload.uploadedBytes !== undefined &&
+                  event.payload.totalBytes !== undefined
+                    ? {
+                        ...old.transferBytes,
+                        [event.payload.stepId]: {
+                          uploaded: event.payload.uploadedBytes,
+                          total: event.payload.totalBytes,
+                        },
+                      }
+                    : old.transferBytes;
+                return {
+                  ...old,
+                  progress: {
+                    ...old.progress,
+                    [event.payload.stepId]: normalized,
+                  },
+                  transferBytes: nextTransferBytes,
                 };
               }
               return old;
