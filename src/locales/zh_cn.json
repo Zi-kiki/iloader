@@ -96,6 +96,8 @@
     "completed": "操作完成",
     "please_wait": "请稍候...",
     "preparing": "准备中...",
+    "cancel": "撤销",
+    "cancel_confirm": "确定要撤销当前操作吗？",
     "current_step": "当前步骤：{{current}}",
     "copy_error_clipboard": "复制错误到剪贴板"
   },

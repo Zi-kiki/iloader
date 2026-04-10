@@ -100,6 +100,8 @@
     "completed": "Operation completed",
     "please_wait": "Please wait...",
     "preparing": "Preparing...",
+    "cancel": "Cancel",
+    "cancel_confirm": "Are you sure you want to cancel this operation?",
     "current_step": "Current step: {{current}}",
     "copy_error_clipboard": "Copy error to clipboard"
   },

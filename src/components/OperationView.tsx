@@ -13,6 +13,7 @@ import { Trans, useTranslation } from "react-i18next";
 import { ErrorVariant, getErrorSuggestions } from "../errors";
 import { useStore } from "../StoreContext";
 import { usePlatform } from "../PlatformContext";
+// import { useDialog } from "../DialogContext";
 
 export default ({
   operationState,
@@ -23,25 +24,33 @@ export default ({
 }) => {
   const { t } = useTranslation();
   const operation = operationState.current;
-  const opFailed = operationState.failed.length > 0;
-  const done =
-    (opFailed &&
-      operationState.started.length ==
-        operationState.completed.length + operationState.failed.length) ||
-    operationState.completed.length == operation.steps.length;
+  const definedStepIds = new Set(operation.steps.map((s) => s.id));
 
+  const startedDefined = operationState.started.filter((id) => definedStepIds.has(id));
+  const completedDefined = operationState.completed.filter((id) => definedStepIds.has(id));
+  const failedDefined = operationState.failed.filter((f) => definedStepIds.has(f.stepId));
+
+  const startedSet = new Set(startedDefined);
+  const completedSet = new Set(completedDefined);
+  const failedSet = new Set(failedDefined.map((f) => f.stepId));
+
+  const opFailed = operationState.failed.length > 0;
+  const done = operation.steps.every(
+    (step) => completedSet.has(step.id) || failedSet.has(step.id),
+  );
+  const canDismiss = done || opFailed;
   const currentStep = done
     ? null
     : operation.steps.find((step) => {
-        const failed = operationState.failed.some((f) => f.stepId === step.id);
-        const completed = operationState.completed.includes(step.id);
-        const started = operationState.started.includes(step.id);
+        const failed = failedSet.has(step.id);
+        const completed = completedSet.has(step.id);
+        const started = startedSet.has(step.id);
         return started && !completed && !failed;
       }) ??
       operation.steps.find((step) => {
-        const failed = operationState.failed.some((f) => f.stepId === step.id);
-        const completed = operationState.completed.includes(step.id);
-        const started = operationState.started.includes(step.id);
+        const failed = failedSet.has(step.id);
+        const completed = completedSet.has(step.id);
+        const started = startedSet.has(step.id);
         return !failed && !completed && !started;
       }) ??
       null;
@@ -67,9 +76,9 @@ export default ({
 
   const weightedProgress = operation.steps.reduce((sum, step) => {
     const weight = getStepWeight(step.id);
-    const failed = operationState.failed.some((f) => f.stepId === step.id);
-    const completed = operationState.completed.includes(step.id);
-    const started = operationState.started.includes(step.id);
+    const failed = failedSet.has(step.id);
+    const completed = completedSet.has(step.id);
+    const started = startedSet.has(step.id);
     const reported = operationState.progress[step.id] ?? 0;
 
     if (failed || completed) return sum + weight;
@@ -83,17 +92,26 @@ export default ({
       : 0;
 
   const formatBytes = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`;
+    if (!Number.isFinite(bytes) || bytes < 0) return "0 B";
+    if (bytes < 1024) return `${Math.floor(bytes)} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
   };
 
-  const transferInfo = operationState.transferBytes["transfer"];
+  const currentStepTransferInfo = currentStep
+    ? operationState.transferBytes[currentStep.id]
+    : undefined;
+
+  const hasValidByteProgress =
+    currentStepTransferInfo !== undefined &&
+    Number.isFinite(currentStepTransferInfo.uploaded) &&
+    Number.isFinite(currentStepTransferInfo.total) &&
+    currentStepTransferInfo.total > 0;
 
   const displayStepText =
-    currentStep?.id === "transfer" && transferInfo
-      ? `${t(currentStep.titleKey)} (${formatBytes(transferInfo.uploaded)}/${formatBytes(transferInfo.total)})`
+    currentStep && hasValidByteProgress
+      ? `${t(currentStep.titleKey)} (${formatBytes(currentStepTransferInfo!.uploaded)}/${formatBytes(currentStepTransferInfo!.total)})`
       : currentStep
         ? t(currentStep.titleKey)
         : done
@@ -106,8 +124,19 @@ export default ({
     "ani.sidestore.io",
   );
   const { platform } = usePlatform();
+  // const { confirm } = useDialog();
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [underage, setUnderage] = useState<boolean>(false);
+
+  // const handleCancelOperation = () => {
+  //   confirm(
+  //     t("operation.cancel"),
+  //     t("operation.cancel_confirm"),
+  //     () => {
+  //       closeMenu();
+  //     },
+  //   );
+  // };
 
   const getSuggestions = useCallback(
     (type: ErrorVariant): string[] => {
@@ -135,12 +164,25 @@ export default ({
     <Modal
       isOpen={true}
       close={() => {
-        if (done) closeMenu();
+        if (canDismiss) closeMenu();
       }}
-      hideClose={!done}
+      hideClose={!canDismiss}
       sizeFit
     >
       <div className="operation-header">
+        {/*
+          Debug-only cancel button.
+          in China, Apple ID login can be very slow, so this helps QA quickly dismiss
+          the operation modal without restarting and re-logging in.
+          Note: this is currently frontend-only behavior; backend cancellation is not wired yet.
+        */}
+          {/* <button
+            className="operation-cancel"
+            onClick={handleCancelOperation}
+            type="button"
+          >
+            {t("operation.cancel")}
+          </button> */}
         <h2>
           {done && !opFailed && operation.successTitleKey
             ? t(operation.successTitleKey)
@@ -168,18 +210,26 @@ export default ({
       </div>
       <div className="operation-content-container">
         <div className="operation-content">
-          {(operation.id === "sideload"
-            ? [{ id: "install", titleKey: "operations.sideload_step_install" }]
+          {((operation.id === "sideload" || operation.id === "install_sidestore")
+            ? [{ id: "summary", titleKey: operation.titleKey }]
             : operation.steps
           ).map((step) => {
             const stepIds =
               operation.id === "sideload"
                 ? ["prepare", "sign", "transfer", "install"]
-                : [step.id];
+                : operation.id === "install_sidestore"
+                  ? ["download", "prepare", "sign", "transfer", "install", "pairing"]
+                  : [step.id];
 
-            let failed = operationState.failed.find((f) => stepIds.includes(f.stepId));
-            let completed = stepIds.every((id) => operationState.completed.includes(id));
-            let started = stepIds.some((id) => operationState.started.includes(id));
+            let failed = failedDefined.find((f) => stepIds.includes(f.stepId));
+            let completed = stepIds.every((id) => completedDefined.includes(id));
+            let started = stepIds.some((id) => startedDefined.includes(id));
+
+            if (done && !failed) {
+              completed = true;
+              started = false;
+            }
+
             let notStarted = !failed && !completed && !started;
 
             // a little bit gross but it gets the job done.
@@ -209,7 +259,11 @@ export default ({
                 </div>
 
                 <div className="operation-step-internal">
-                  <p>{operation.id === "sideload" ? displayStepText : t(step.titleKey)}</p>
+                  <p>
+                    {operation.id === "sideload" || operation.id === "install_sidestore"
+                      ? displayStepText
+                      : t(step.titleKey)}
+                  </p>
                   {failed && (
                     <>
                       <pre className="operation-extra-details">
@@ -331,8 +385,12 @@ export default ({
           </button>
         </div>
       )}
-      {done && (
-        <button style={{ width: "100%" }} onClick={closeMenu}>
+      {canDismiss && (
+        <button
+          style={{ width: "100%" }}
+          className="operation-dismiss"
+          onClick={closeMenu}
+        >
           {t("common.dismiss")}
         </button>
       )}

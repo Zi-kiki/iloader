@@ -3,9 +3,9 @@
   flex-direction: column;
   gap: 1.25em;
   overflow-y: hidden;
-  overflow-x: auto;
+  overflow-x: hidden;
   width: 100%;
-  min-width: min(760px, 92vw);
+  min-width: 0;
 }
 
 .operation-header h2 {
@@ -29,6 +29,8 @@
   border-radius: 16px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.03);
+  width: 100%;
+  min-width: min(650px, 92vw);
 }
 
 .operation-step-icon {
@@ -114,6 +116,19 @@
 
 .operation-header {
   margin-bottom: 1em;
+  position: relative;
+}
+
+.operation-cancel {
+  position: absolute;
+  top: 6px;
+  right: 0;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  line-height: 1.1;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .operation-header p {
@@ -174,6 +189,10 @@
 
 .operation-suggestions {
   padding: 0rem 0 1rem 0;
+}
+
+.operation-dismiss {
+  margin-top: 0.85rem;
 }
 
 .operation-suggestions ul {

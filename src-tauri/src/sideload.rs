@@ -1,5 +1,6 @@
 use std::{collections::HashSet, path::{Path, PathBuf}, sync::Mutex};
-use tokio::time::{Duration, Instant, interval};
+use futures::StreamExt;
+use tokio::{io::AsyncWriteExt, time::{Duration, Instant, interval}};
 
 use crate::{
     device::{get_provider, get_provider_from_connection, get_usbmuxd, DeviceInfoMutex},
@@ -401,7 +402,13 @@ pub async fn install_sidestore_operation(
         .temp_dir()
         .map_err(|e| AppError::Filesystem("Failed to get temp dir".into(), e.to_string()))?
         .join(filename);
-    op.fail_if_err("download", download(url, &dest).await)?;
+    op.fail_if_err(
+        "download",
+        download(url, &dest, |downloaded, total| {
+            let _ = op.progress_bytes("download", downloaded, total);
+        })
+        .await,
+    )?;
     op.move_on("download", "install")?;
     let device = {
         let device_guard = device_state.lock().unwrap();
@@ -410,7 +417,7 @@ pub async fn install_sidestore_operation(
             None => return op.fail("install", AppError::NoDeviceSelected),
         }
     };
-    op.fail_if_err(
+    let _special = op.fail_if_err(
         "install",
         sideload_with_progress(
             &op,
@@ -420,7 +427,8 @@ pub async fn install_sidestore_operation(
         )
         .await,
     )?;
-    op.move_on("install", "pairing")?;
+
+    op.start("pairing")?;
     let sidestore_info = op.fail_if_err(
         "pairing",
         get_sidestore_info(&device.info, live_container).await,
@@ -437,21 +445,18 @@ pub async fn install_sidestore_operation(
             "pairing",
             place_file(device.pairing, &provider, info.bundle_id, info.path).await,
         )?;
+        op.complete("pairing")?;
     } else {
-        return op.fail(
-            "pairing",
-            AppError::HouseArrest(
-                "SideStore's not found".into(),
-                "The device did not report SideStore's bundle ID as installed".into(),
-            ),
-        );
+        op.complete("pairing")?;
     }
-
-    op.complete("pairing")?;
     Ok(())
 }
 
-pub async fn download(url: impl AsRef<str>, dest: &PathBuf) -> Result<(), AppError> {
+pub async fn download(
+    url: impl AsRef<str>,
+    dest: &PathBuf,
+    mut on_progress: impl FnMut(u64, u64),
+) -> Result<(), AppError> {
     let response = reqwest::get(url.as_ref())
         .await
         .map_err(|e| AppError::Download(e.to_string()))?;
@@ -462,13 +467,29 @@ pub async fn download(url: impl AsRef<str>, dest: &PathBuf) -> Result<(), AppErr
         )));
     }
 
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| AppError::Download(e.to_string()))?;
-    tokio::fs::write(dest, &bytes).await.map_err(|e| {
-        AppError::Filesystem("Failed to write downloaded file".into(), e.to_string())
+    let total = response.content_length().unwrap_or(1).max(1);
+    let mut downloaded: u64 = 0;
+    let mut stream = response.bytes_stream();
+    let mut file = tokio::fs::File::create(dest).await.map_err(|e| {
+        AppError::Filesystem("Failed to create downloaded file".into(), e.to_string())
     })?;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| AppError::Download(e.to_string()))?;
+        file.write_all(&chunk).await.map_err(|e| {
+            AppError::Filesystem("Failed to write downloaded file".into(), e.to_string())
+        })?;
+        downloaded = downloaded.saturating_add(chunk.len() as u64);
+        on_progress(downloaded.min(total), total);
+    }
+
+    file.flush().await.map_err(|e| {
+        AppError::Filesystem("Failed to flush downloaded file".into(), e.to_string())
+    })?;
+
+    if downloaded == 0 {
+        on_progress(1, 1);
+    }
 
     Ok(())
 }
