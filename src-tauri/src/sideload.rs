@@ -272,20 +272,20 @@ pub async fn sideload_with_progress(
             .map_err(AppError::from),
     )?;
 
-    // For large IPAs, signing can take a while. Advance progress smoothly based on size
-    // and machine capability so high-end CPUs don't look too conservative.
+    // For large IPAs, signing can take a while. Keep progress moving predictably
+    // with conservative throughput assumptions so it doesn't stall at low percentages.
     let cpu_threads = std::thread::available_parallelism()
         .map(|n| n.get() as f64)
         .unwrap_or(8.0);
-    let estimated_sign_throughput_mb_s = (30.0 + cpu_threads * 3.5).clamp(35.0, 180.0);
+    let estimated_sign_throughput_mb_s = (18.0 + cpu_threads * 1.8).clamp(20.0, 95.0);
     let estimated_sign_secs = ((original_bytes as f64
         / (estimated_sign_throughput_mb_s * 1024.0 * 1024.0))
         .ceil() as u64)
-        .clamp(10, 180);
+        .clamp(8, 240);
 
     let sign_start = Instant::now();
-    let mut ticker = interval(Duration::from_millis(250));
-    op.progress("sign", 0.45)?;
+    let mut ticker = interval(Duration::from_millis(180));
+    op.progress("sign", 0.2)?;
 
     let mut sign_future = Box::pin(sideloader.get_mut().sign_app(app_path_buf, Some(team), false));
 
@@ -298,16 +298,15 @@ pub async fn sideload_with_progress(
             _ = ticker.tick() => {
                 let elapsed = sign_start.elapsed().as_secs_f64();
                 let linear = (elapsed / estimated_sign_secs as f64).clamp(0.0, 1.0);
-                // Slightly front-load progress for better UX while still bounded.
-                let eased = 1.0 - (1.0 - linear).powf(1.35);
+                let eased = 1.0 - (1.0 - linear).powf(1.15);
 
-                // Keep headroom for final completion signal.
-                let mut visual = 0.45 + eased * 0.53;
+                // Sign stage should visually progress across most of its range.
+                let mut visual = 0.2 + eased * 0.76;
 
-                // If signing exceeds estimate, creep forward very slowly instead of appearing frozen.
+                // If estimate is exceeded, continue creeping to avoid apparent freeze.
                 if elapsed > estimated_sign_secs as f64 {
-                    let overtime = (elapsed - estimated_sign_secs as f64).min(90.0);
-                    visual = visual.max(0.90 + (overtime / 90.0) * 0.08);
+                    let overtime = (elapsed - estimated_sign_secs as f64).min(180.0);
+                    visual = visual.max(0.90 + (overtime / 180.0) * 0.08);
                 }
 
                 let _ = op.progress("sign", visual.min(0.98));

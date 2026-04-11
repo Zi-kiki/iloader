@@ -128,22 +128,38 @@ function App() {
               } else if (event.payload.updateType === "progress") {
                 const raw = event.payload.progress ?? 0;
                 const normalized = Math.max(0, Math.min(1, raw));
+                const prevProgress = old.progress[event.payload.stepId] ?? 0;
+                const monotonicProgress = Math.max(prevProgress, normalized);
+
                 const nextTransferBytes =
                   event.payload.uploadedBytes !== undefined &&
                   event.payload.totalBytes !== undefined
-                    ? {
-                        ...old.transferBytes,
-                        [event.payload.stepId]: {
-                          uploaded: event.payload.uploadedBytes,
-                          total: event.payload.totalBytes,
-                        },
-                      }
+                    ? (() => {
+                        const prev = old.transferBytes[event.payload.stepId];
+                        const nextUploaded = Math.max(
+                          prev?.uploaded ?? 0,
+                          Math.max(0, event.payload.uploadedBytes),
+                        );
+                        const nextTotal = Math.max(
+                          prev?.total ?? 0,
+                          Math.max(1, event.payload.totalBytes),
+                        );
+
+                        return {
+                          ...old.transferBytes,
+                          [event.payload.stepId]: {
+                            uploaded: Math.min(nextUploaded, nextTotal),
+                            total: nextTotal,
+                          },
+                        };
+                      })()
                     : old.transferBytes;
+
                 return {
                   ...old,
                   progress: {
                     ...old.progress,
-                    [event.payload.stepId]: normalized,
+                    [event.payload.stepId]: monotonicProgress,
                   },
                   transferBytes: nextTransferBytes,
                 };

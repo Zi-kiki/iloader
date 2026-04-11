@@ -96,10 +96,6 @@ export const sideloadOperation: Operation = {
   titleKey: "operations.sideload_title",
   steps: [
     {
-      id: "prepare",
-      titleKey: "operations.sideload_step_prepare",
-    },
-    {
       id: "sign",
       titleKey: "operations.sideload_step_sign",
     },

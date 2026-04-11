@@ -30,7 +30,6 @@ export default ({
   const completedDefined = operationState.completed.filter((id) => definedStepIds.has(id));
   const failedDefined = operationState.failed.filter((f) => definedStepIds.has(f.stepId));
 
-  const startedSet = new Set(startedDefined);
   const completedSet = new Set(completedDefined);
   const failedSet = new Set(failedDefined.map((f) => f.stepId));
 
@@ -39,56 +38,75 @@ export default ({
     (step) => completedSet.has(step.id) || failedSet.has(step.id),
   );
   const canDismiss = done || opFailed;
-  const currentStep = done
-    ? null
-    : operation.steps.find((step) => {
-        const failed = failedSet.has(step.id);
-        const completed = completedSet.has(step.id);
-        const started = startedSet.has(step.id);
-        return started && !completed && !failed;
-      }) ??
-      operation.steps.find((step) => {
-        const failed = failedSet.has(step.id);
-        const completed = completedSet.has(step.id);
-        const started = startedSet.has(step.id);
-        return !failed && !completed && !started;
-      }) ??
-      null;
+
+  const detailStepIds =
+    operation.id === "install_sidestore"
+      ? ["download", "prepare", "sign", "transfer", "install", "pairing"]
+      : operation.id === "sideload"
+        ? ["prepare", "sign", "transfer", "install"]
+        : operation.steps.map((s) => s.id);
+
+  const detailStartedSet = new Set(
+    operationState.started.filter((id) => detailStepIds.includes(id)),
+  );
+  const detailCompletedSet = new Set(
+    operationState.completed.filter((id) => detailStepIds.includes(id)),
+  );
+  const detailFailedSet = new Set(
+    operationState.failed
+      .map((f) => f.stepId)
+      .filter((id) => detailStepIds.includes(id)),
+  );
 
   const defaultStepWeight = 1;
-  const sideloadStepWeights: Record<string, number> = {
-    prepare: 1,
-    cert: 2,
-    profile: 2,
-    sign: 2,
+  const detailedStepWeights: Record<string, number> = {
+    download: 4,
+    prepare: 0.5,
+    sign: 5,
     transfer: 5,
+    install: 2,
+    pairing: 0.5,
+    cert: 1,
+    profile: 1,
   };
 
   const getStepWeight = (stepId: string) =>
-    operation.id === "sideload"
-      ? (sideloadStepWeights[stepId] ?? defaultStepWeight)
+    operation.id === "sideload" || operation.id === "install_sidestore"
+      ? (detailedStepWeights[stepId] ?? defaultStepWeight)
       : defaultStepWeight;
 
-  const totalWeight = operation.steps.reduce(
-    (sum, step) => sum + getStepWeight(step.id),
+  const totalWeight = detailStepIds.reduce(
+    (sum, stepId) => sum + getStepWeight(stepId),
     0,
   );
 
-  const weightedProgress = operation.steps.reduce((sum, step) => {
-    const weight = getStepWeight(step.id);
-    const failed = failedSet.has(step.id);
-    const completed = completedSet.has(step.id);
-    const started = startedSet.has(step.id);
-    const reported = operationState.progress[step.id] ?? 0;
+  const weightedProgress = detailStepIds.reduce((sum, stepId) => {
+    const weight = getStepWeight(stepId);
+    const failed = detailFailedSet.has(stepId);
+    const completed = detailCompletedSet.has(stepId);
+    const started = detailStartedSet.has(stepId);
+    const reported = operationState.progress[stepId] ?? 0;
 
-    if (failed || completed) return sum + weight;
+    if (completed) return sum + weight;
+
+    if (failed) {
+      const failedProgress = started
+        ? Math.max(0.02, Math.min(0.98, reported))
+        : Math.max(0, Math.min(0.98, reported));
+      return sum + weight * failedProgress;
+    }
+
     if (started) return sum + weight * Math.max(0.02, Math.min(0.98, reported));
     return sum;
   }, 0);
 
   const progressPercent =
     totalWeight > 0
-      ? Math.min(100, Math.round(((done ? totalWeight : weightedProgress) / totalWeight) * 100))
+      ? (() => {
+          const ratio = ((done && !opFailed ? totalWeight : weightedProgress) / totalWeight);
+          const raw = Math.min(100, Math.round(ratio * 100));
+          return opFailed ? Math.min(99, raw) : raw;
+        })()
       : 0;
 
   const formatBytes = (bytes: number) => {
@@ -99,22 +117,61 @@ export default ({
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
   };
 
-  const currentStepTransferInfo = currentStep
-    ? operationState.transferBytes[currentStep.id]
+  const failedDetailStepIdsInOrder = detailStepIds.filter((id) =>
+    operationState.failed.some((f) => f.stepId === id),
+  );
+
+  // Prefer the earliest failed detailed step so wrapper failures (e.g. "install")
+  // don't override the true failing inner step (e.g. "sign").
+  const pinnedFailedDetailStepId =
+    failedDetailStepIdsInOrder.find((id) => !detailCompletedSet.has(id)) ??
+    failedDetailStepIdsInOrder[0] ??
+    null;
+
+  const detailCurrentStepId = done && !opFailed
+    ? null
+    : pinnedFailedDetailStepId ??
+      detailStepIds.find((id) => detailStartedSet.has(id) && !detailCompletedSet.has(id)) ??
+      detailStepIds.find((id) => !detailCompletedSet.has(id)) ??
+      null;
+
+  const getDetailStepTitle = (stepId: string) => {
+    if (operation.id === "install_sidestore" && stepId === "install") {
+      return t("operations.sideload_step_install");
+    }
+
+    const fromOperation = operation.steps.find((s) => s.id === stepId);
+    if (fromOperation) return t(fromOperation.titleKey);
+
+    if (stepId === "prepare") return t("operations.sideload_step_prepare");
+    if (stepId === "sign") return t("operations.sideload_step_sign");
+    if (stepId === "transfer") return t("operations.sideload_step_transfer");
+
+    return stepId;
+  };
+
+  const currentStepTransferInfo = detailCurrentStepId
+    ? operationState.transferBytes[detailCurrentStepId]
     : undefined;
 
+  const byteProgressStepIds = new Set(["download", "transfer"]);
+  const shouldShowByteProgress =
+    detailCurrentStepId !== null && byteProgressStepIds.has(detailCurrentStepId);
+
   const hasValidByteProgress =
+    shouldShowByteProgress &&
     currentStepTransferInfo !== undefined &&
     Number.isFinite(currentStepTransferInfo.uploaded) &&
     Number.isFinite(currentStepTransferInfo.total) &&
-    currentStepTransferInfo.total > 0;
+    currentStepTransferInfo.total > 0 &&
+    currentStepTransferInfo.uploaded > 0;
 
   const displayStepText =
-    currentStep && hasValidByteProgress
-      ? `${t(currentStep.titleKey)} (${formatBytes(currentStepTransferInfo!.uploaded)}/${formatBytes(currentStepTransferInfo!.total)})`
-      : currentStep
-        ? t(currentStep.titleKey)
-        : done
+    detailCurrentStepId && hasValidByteProgress
+      ? `${getDetailStepTitle(detailCurrentStepId)} (${formatBytes(currentStepTransferInfo!.uploaded)}/${formatBytes(currentStepTransferInfo!.total)})`
+      : detailCurrentStepId
+        ? getDetailStepTitle(detailCurrentStepId)
+        : done && !opFailed
           ? t("operation.completed")
           : t("operation.preparing");
 
@@ -210,18 +267,10 @@ export default ({
       </div>
       <div className="operation-content-container">
         <div className="operation-content">
-          {((operation.id === "sideload" || operation.id === "install_sidestore")
-            ? [{ id: "summary", titleKey: operation.titleKey }]
-            : operation.steps
-          ).map((step) => {
-            const stepIds =
-              operation.id === "sideload"
-                ? ["prepare", "sign", "transfer", "install"]
-                : operation.id === "install_sidestore"
-                  ? ["download", "prepare", "sign", "transfer", "install", "pairing"]
-                  : [step.id];
+          {operation.steps.map((step) => {
+            const stepIds = [step.id];
 
-            let failed = failedDefined.find((f) => stepIds.includes(f.stepId));
+            const failed = failedDefined.find((f) => stepIds.includes(f.stepId));
             let completed = stepIds.every((id) => completedDefined.includes(id));
             let started = stepIds.some((id) => startedDefined.includes(id));
 
@@ -230,7 +279,7 @@ export default ({
               started = false;
             }
 
-            let notStarted = !failed && !completed && !started;
+            const notStarted = !failed && !completed && !started;
 
             // a little bit gross but it gets the job done.
             let lines =
@@ -259,11 +308,7 @@ export default ({
                 </div>
 
                 <div className="operation-step-internal">
-                  <p>
-                    {operation.id === "sideload" || operation.id === "install_sidestore"
-                      ? displayStepText
-                      : t(step.titleKey)}
-                  </p>
+                  <p>{t(step.titleKey)}</p>
                   {failed && (
                     <>
                       <pre className="operation-extra-details">
@@ -310,7 +355,7 @@ export default ({
         </p>
       )}
       {done && !(!opFailed && operation.successMessageKey) && <p></p>}
-      {opFailed && done && (
+      {opFailed && (
         <div className="operation-suggestions">
           {suggestions.length > 0 && <h3>{t("error.suggestions_heading")}</h3>}
           {suggestions.length > 0 && (
